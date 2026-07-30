@@ -1,6 +1,24 @@
 export const metadata = {
-  title: "Pollería MiniService",
-  description: "Sistema de gestión para pollería y miniservice",
+  title: "Doña Martu",
+  description: "Sistema de gestión de la pollería Doña Martu",
+  manifest: "/manifest.json",
+  themeColor: "#0B1120",
+  icons: {
+    icon: "/favicon.png",
+    apple: "/apple-touch-icon.png",
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Doña Martu",
+  },
+};
+
+export const viewport = {
+  themeColor: "#0B1120",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({ children }) {

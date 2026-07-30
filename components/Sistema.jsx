@@ -1016,12 +1016,8 @@ function Placeholder({ title, icon: Icon }) {
 function Sidebar({ active, setActive }) {
   return (
     <aside className="sidebar" style={{ width: 210, flexShrink: 0, background: C.panel, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", padding: "18px 12px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px 18px" }}>
-        <div style={{ width: 38, height: 38, borderRadius: 12, background: C.primarySoft, border: `1px solid rgba(251,191,36,.3)`, display: "grid", placeItems: "center", fontSize: 20 }}>🐔</div>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 800, color: C.text, lineHeight: 1 }}>Pollería</div>
-          <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>MiniService</div>
-        </div>
+      <div style={{ padding: "4px 4px 18px" }}>
+        <img src="/logo.png" alt="Doña Martu" style={{ width: "100%", borderRadius: 12, display: "block" }} />
       </div>
       <nav style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, overflowY: "auto" }}>
         {NAV.map((n) => {
