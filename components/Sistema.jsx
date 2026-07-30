@@ -1,0 +1,1199 @@
+"use client";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { SEED_PRODUCTS } from "@/lib/seed";
+import { supabaseReady } from "@/lib/supabase";
+import {
+  fetchProductos, upsertProducto, subirFoto,
+  registrarCompra, registrarVenta,
+  fetchPedidos, crearPedido, actualizarPedido,
+} from "@/lib/db";
+import {
+  LayoutGrid, ShoppingCart, Beef, Package, Download, Users, Truck, Wallet,
+  TrendingUp, Target, Bot, Search, Plus, Minus, X, Scale, Check, Zap,
+  Bell, AlertTriangle, ArrowUp, TrendingDown, Sparkles, Lightbulb, Trash2,
+  Maximize2, ChevronRight, Command, ClipboardList, Upload, Percent,
+  Calculator, Pencil, Save, ImagePlus, Clock, Truck as TruckIcon, PackageCheck,
+} from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell,
+} from "recharts";
+
+/* ============================================================
+   TOKENS
+   ============================================================ */
+const C = {
+  bg: "#0B1120",
+  panel: "#0F172A",
+  card: "#131C2E",
+  card2: "#0D1526",
+  border: "rgba(255,255,255,.06)",
+  border2: "rgba(255,255,255,.10)",
+  text: "#F1F5F9",
+  sub: "#8B98AD",
+  faint: "#5B6779",
+  primary: "#FBBF24",
+  primarySoft: "rgba(251,191,36,.14)",
+  green: "#4ADE80",
+  greenSoft: "rgba(74,222,128,.14)",
+  red: "#F87171",
+  redSoft: "rgba(248,113,113,.14)",
+  blue: "#60A5FA",
+  purple: "#A78BFA",
+};
+const money = (n) => "$" + Math.round(n).toLocaleString("es-AR");
+
+/* ============================================================
+   DATA (matches the mockup)
+   ============================================================ */
+const IMG = {
+  pollo: "https://images.unsplash.com/photo-1587593810167-a84920ea0781?w=200&q=70",
+  pechuga: "https://images.unsplash.com/photo-1604503468506-a8da13d82791?w=200&q=70",
+  milanesa: "https://images.unsplash.com/photo-1619221882220-947b3d3c8861?w=200&q=70",
+  alitas: "https://images.unsplash.com/photo-1608039755401-742074f0548d?w=200&q=70",
+  huevos: "https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?w=200&q=70",
+  papas: "https://images.unsplash.com/photo-1518977676601-b53f82aba655?w=200&q=70",
+  papasfritas: "https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=200&q=70",
+  coca: "https://images.unsplash.com/photo-1554866585-cd94860890b7?w=200&q=70",
+  pan: "https://images.unsplash.com/photo-1509440159596-0249088772ff?w=200&q=70",
+  queso: "https://images.unsplash.com/photo-1486297678162-eb2a19b0a32d?w=200&q=70",
+  mayonesa: "https://images.unsplash.com/photo-1607013251379-e6eecfffe234?w=200&q=70",
+  hamburguesa: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=200&q=70",
+  salchicha: "https://images.unsplash.com/photo-1612392062631-94dd858cba88?w=200&q=70",
+};
+const EMO = {
+  pollo: "🐔", pechuga: "🍗", milanesa: "🥩", alitas: "🍖", huevos: "🥚",
+  papas: "🥔", papasfritas: "🍟", coca: "🥤", pan: "🥖", queso: "🧀",
+  mayonesa: "🥫", hamburguesa: "🍔", salchicha: "🌭",
+};
+
+/* ---- Global product store (so uploaded photos persist across screens) ---- */
+const Store = React.createContext(null);
+const useStore = () => React.useContext(Store);
+// stand-in used only for the initial cart seed before context mounts:
+const P = (id) => SEED_PRODUCTS.find((p) => p.id === id);
+
+const STOCK_QUICK = ["pollo", "milanesa", "huevos", "papas", "coca", "pan"];
+const FREQUENT = ["pollo", "pechuga", "milanesa", "alitas", "huevos", "papasfritas", "coca", "pan", "hamburguesa", "queso", "salchicha", "mayonesa"];
+
+const HOURLY = [
+  { h: "7", v: 2000 }, { h: "8", v: 6000 }, { h: "9", v: 9000 }, { h: "10", v: 13000 },
+  { h: "11", v: 21000 }, { h: "12", v: 19000 }, { h: "13", v: 12000 }, { h: "14", v: 14000 },
+  { h: "15", v: 16000 }, { h: "16", v: 15000 }, { h: "17", v: 22000 }, { h: "18", v: 26000 },
+  { h: "19", v: 32600 }, { h: "20", v: 24000 }, { h: "21", v: 13000 }, { h: "22", v: 4000 },
+];
+
+const INSIGHTS = [
+  { icon: TrendingUp, color: C.green, text: "Hoy se vendió 22% más que el viernes pasado." },
+  { icon: AlertTriangle, color: C.primary, text: "Quedan solo 4 kg de milanesas.", sub: "Recomendamos reponer." },
+  { icon: TrendingUp, color: C.purple, text: "Los viernes vendés un 42% más de gaseosas." },
+  { icon: Lightbulb, color: C.primary, text: "Un combo de pollo + papas + coca puede aumentar tu ticket promedio." },
+];
+
+const RECENT = [
+  { n: "#000125", t: "Hace 5 min", v: 12350, m: "Efectivo", c: C.green },
+  { n: "#000124", t: "Hace 18 min", v: 8700, m: "Transferencia", c: C.blue },
+  { n: "#000123", t: "Hace 25 min", v: 15600, m: "Efectivo", c: C.green },
+  { n: "#000122", t: "Hace 40 min", v: 5200, m: "Mercado Pago", c: C.primary },
+];
+const CLIENTS = [
+  { name: "María López", buys: 12, v: 48600, last: "Hoy" },
+  { name: "Juan Pérez", buys: 8, v: 32700, last: "Ayer" },
+  { name: "Pedro González", buys: 5, v: 21300, last: "3 días" },
+  { name: "Ana Rodríguez", buys: 10, v: 41800, last: "Hoy" },
+];
+const TOP = [
+  { id: "pollo", qty: "132 kg", v: 693000 },
+  { id: "pechuga", qty: "98 kg", v: 735000 },
+  { id: "milanesa", qty: "76 kg", v: 592800 },
+  { id: "alitas", qty: "65 kg", v: 273000 },
+  { id: "huevos", qty: "58 maples", v: 278400 },
+];
+
+const NAV = [
+  { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
+  { id: "ventas", label: "Ventas", icon: ShoppingCart },
+  { id: "productos", label: "Productos", icon: Beef },
+  { id: "stock", label: "Stock", icon: Package },
+  { id: "compras", label: "Compras", icon: Download },
+  { id: "pedidos", label: "Pedidos de stock", icon: ClipboardList },
+  { id: "clientes", label: "Clientes", icon: Users },
+  { id: "proveedores", label: "Proveedores", icon: Truck },
+  { id: "caja", label: "Caja", icon: Wallet },
+  { id: "reportes", label: "Reportes", icon: TrendingUp },
+  { id: "promos", label: "Promociones", icon: Target },
+  { id: "ia", label: "IA Asistente", icon: Bot },
+];
+
+/* ============================================================
+   PHOTO (real image w/ emoji fallback)
+   ============================================================ */
+function Photo({ id, src, size = 44, radius = 12 }) {
+  const store = useStore();
+  const [err, setErr] = useState(false);
+  useEffect(() => setErr(false), [id, src]);
+  const custom = src || store?.products.find((p) => p.id === id)?.photo;
+  const url = custom || IMG[id];
+  if (err || !url) {
+    return (
+      <div style={{ width: size, height: size, borderRadius: radius, background: C.card2, display: "grid", placeItems: "center", fontSize: size * 0.5, flexShrink: 0 }}>
+        {EMO[id] || "📦"}
+      </div>
+    );
+  }
+  return (
+    <img src={url} onError={() => setErr(true)} alt=""
+      style={{ width: size, height: size, borderRadius: radius, objectFit: "cover", flexShrink: 0, background: C.card2 }} />
+  );
+}
+
+/* ============================================================
+   ANIMATED NUMBER
+   ============================================================ */
+function useCountUp(target, dur = 800) {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    let raf; const start = performance.now();
+    const tick = (now) => {
+      const p = Math.min(1, (now - start) / dur);
+      setV(target * (1 - Math.pow(1 - p, 3)));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, dur]);
+  return v;
+}
+
+/* ============================================================
+   PRIMITIVES
+   ============================================================ */
+const Panel = ({ children, style, ...p }) => (
+  <div {...p} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 18, ...style }}>{children}</div>
+);
+const SectionHead = ({ icon: Icon, title, action }) => (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 15, fontWeight: 700, color: C.text }}>
+      {Icon && <Icon size={17} color={C.primary} />} {title}
+    </div>
+    {action && <button style={{ background: "none", border: "none", color: C.sub, fontSize: 12.5, cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}>{action} <ChevronRight size={13} /></button>}
+  </div>
+);
+
+/* ============================================================
+   WEIGHT MODAL
+   ============================================================ */
+function WeightModal({ product, onClose, onConfirm }) {
+  const [kg, setKg] = useState("1.000");
+  const num = parseFloat(kg) || 0;
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(3,7,18,.75)", backdropFilter: "blur(6px)", zIndex: 80, display: "grid", placeItems: "center", padding: 20 }}>
+      <motion.div onClick={(e) => e.stopPropagation()} initial={{ scale: 0.94, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.94, y: 12 }}
+        transition={{ type: "spring", stiffness: 380, damping: 28 }}
+        style={{ width: "100%", maxWidth: 420, background: C.panel, border: `1px solid ${C.border2}`, borderRadius: 22, padding: 26, boxShadow: "0 24px 64px rgba(0,0,0,.5)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 13, marginBottom: 20 }}>
+          <Photo id={product.id} size={52} radius={14} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: C.text }}>{product.name}</div>
+            <div style={{ fontSize: 13, color: C.sub }}>{money(product.price)} / kg</div>
+          </div>
+          <button onClick={onClose} style={iconBtn}><X size={17} color={C.sub} /></button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, color: C.sub, fontSize: 13, marginBottom: 9 }}><Scale size={14} /> ¿Cuántos kilos?</div>
+        <input autoFocus value={kg} onChange={(e) => setKg(e.target.value.replace(/[^0-9.]/g, ""))}
+          onKeyDown={(e) => e.key === "Enter" && num > 0 && onConfirm(num)}
+          style={{ width: "100%", background: C.bg, border: `1px solid ${C.border2}`, borderRadius: 14, padding: "16px", fontSize: 32, fontWeight: 700, color: C.text, textAlign: "center", fontVariantNumeric: "tabular-nums", outline: "none" }} />
+        <div style={{ display: "flex", gap: 7, margin: "12px 0" }}>
+          {[0.5, 1, 1.5, 2].map((q) => (
+            <button key={q} onClick={() => setKg(q.toFixed(3))} style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 11, padding: "9px 0", color: C.sub, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>{q} kg</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "14px 0", borderTop: `1px solid ${C.border}`, marginBottom: 16 }}>
+          <span style={{ color: C.sub, fontSize: 14 }}>Total</span>
+          <span style={{ fontSize: 28, fontWeight: 800, color: C.primary, fontVariantNumeric: "tabular-nums" }}>{money(num * product.price)}</span>
+        </div>
+        <button disabled={num <= 0} onClick={() => onConfirm(num)} style={{ ...cobrarBtn, opacity: num <= 0 ? 0.4 : 1, justifyContent: "center" }}>
+          <Plus size={19} /> Agregar al carrito
+        </button>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/* ============================================================
+   NEW SALE CARD (left column of mockup)
+   ============================================================ */
+function NewSaleCard({ cart, setCart, onAdd }) {
+  const [q, setQ] = useState("");
+  const searchRef = useRef();
+  const setQty = (id, d) =>
+    setCart((prev) => prev.map((i) => i.id === id ? { ...i, qty: Math.max(0, +(i.qty + d).toFixed(3)) } : i).filter((i) => i.qty > 0));
+  const del = (id) => setCart((prev) => prev.filter((i) => i.id !== id));
+  const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
+  const [flash, setFlash] = useState(false);
+  const charge = () => {
+    if (!cart.length) return;
+    setFlash(true);
+    const items = cart.map((i) => ({ id: i.id, name: i.name, qty: i.qty, price: i.price }));
+    registrarVenta({ total: subtotal, metodo: "efectivo", items }).catch(() => {}); // guarda la venta
+    setTimeout(() => { setFlash(false); setCart([]); }, 850);
+  };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "F2") { e.preventDefault(); charge(); }
+      if (e.key === "F3" || (e.key.toLowerCase() === "f" && e.metaKey)) { e.preventDefault(); searchRef.current?.focus(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }); // eslint-disable-line
+
+  return (
+    <Panel style={{ padding: 20, position: "relative", overflow: "hidden" }}>
+      <AnimatePresence>
+        {flash && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: "absolute", inset: 0, zIndex: 10, background: C.greenSoft, backdropFilter: "blur(4px)", display: "grid", placeItems: "center", borderRadius: 18 }}>
+            <motion.div initial={{ scale: 0.6 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 300, damping: 18 }} style={{ textAlign: "center" }}>
+              <div style={{ width: 64, height: 64, borderRadius: 999, background: C.green, display: "grid", placeItems: "center", margin: "0 auto 12px" }}>
+                <Check size={36} color={C.bg} strokeWidth={3} />
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>Venta cobrada</div>
+              <div style={{ color: C.sub, fontSize: 13 }}>{money(subtotal)}</div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <SectionHead icon={ShoppingCart} title="Nueva venta" />
+      <div style={{ position: "relative", marginBottom: 16 }}>
+        <Search size={17} color={C.faint} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
+        <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Escanear o buscar producto..."
+          style={{ width: "100%", background: C.card2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 40px 12px 40px", fontSize: 13.5, color: C.text, outline: "none" }} />
+        <kbd style={kbdRight}>⌘F</kbd>
+      </div>
+
+      <div style={{ minHeight: 180 }}>
+        {!cart.length ? (
+          <div style={{ display: "grid", placeItems: "center", padding: "40px 0", color: C.faint, textAlign: "center" }}>
+            <ShoppingCart size={30} color={C.border2} style={{ margin: "0 auto 8px" }} />
+            <div style={{ fontSize: 13 }}>Agregá productos desde la derecha</div>
+          </div>
+        ) : (
+          <AnimatePresence>
+            {cart.map((i) => (
+              <motion.div key={i.id} layout initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 16 }}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+                <Photo id={i.id} size={40} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: C.text }}>{i.name}</div>
+                  <div style={{ fontSize: 11.5, color: C.sub }}>{i.byWeight ? `${i.qty} kg` : `${i.qty} ${i.unit}`}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 3, marginRight: 4 }}>
+                  <button onClick={() => setQty(i.id, i.byWeight ? -0.25 : -1)} style={qtyBtn}><Minus size={12} color={C.sub} /></button>
+                  <button onClick={() => setQty(i.id, i.byWeight ? 0.25 : 1)} style={qtyBtn}><Plus size={12} color={C.sub} /></button>
+                </div>
+                <div style={{ fontSize: 12, color: C.sub, width: 70, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(i.price)} {i.byWeight ? "/kg" : ""}</div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: C.text, width: 66, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(i.price * i.qty)}</div>
+                <button onClick={() => del(i.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={15} color={C.faint} /></button>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        )}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "16px 0 14px" }}>
+        <span style={{ fontSize: 12.5, color: C.sub }}>{cart.length} productos</span>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span style={{ fontSize: 12.5, color: C.sub }}>Total</span>
+          <span style={{ fontSize: 24, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(subtotal)}</span>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 10 }}>
+        <button style={{ background: C.card, border: `1px solid ${C.border2}`, borderRadius: 12, padding: "13px", color: C.text, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>Guardar venta</button>
+        <motion.button whileTap={{ scale: 0.98 }} onClick={charge} style={cobrarBtn}>
+          <Zap size={17} /> Cobrar <kbd style={{ marginLeft: "auto", fontSize: 11, background: "rgba(0,0,0,.18)", padding: "2px 7px", borderRadius: 6 }}>F2</kbd>
+        </motion.button>
+      </div>
+    </Panel>
+  );
+}
+
+/* ============================================================
+   FREQUENT PRODUCT GRID (right column of mockup)
+   ============================================================ */
+function FrequentGrid({ onAdd }) {
+  const { products } = useStore();
+  const byId = (id) => products.find((p) => p.id === id);
+  return (
+    <Panel style={{ padding: 20 }}>
+      <SectionHead icon={ShoppingCart} title="Productos frecuentes" action="Ver todos" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }} className="freq-grid">
+        {FREQUENT.map((id) => {
+          const p = byId(id);
+          if (!p) return null;
+          return (
+            <motion.button key={id} whileHover={{ y: -3 }} whileTap={{ scale: 0.96 }}
+              transition={{ type: "spring", stiffness: 400, damping: 26 }} onClick={() => onAdd(p)}
+              style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 12, cursor: "pointer", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+              <Photo id={id} size={62} radius={12} />
+              <div>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text, lineHeight: 1.2 }}>{p.name}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.primary, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
+                  {money(p.price)}{p.byWeight ? <span style={{ fontSize: 10, color: C.sub }}> /kg</span> : ""}
+                </div>
+              </div>
+            </motion.button>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+function Dashboard({ cart, setCart, onAdd }) {
+  const { products } = useStore();
+  const byId = (id) => products.find((p) => p.id === id);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }} className="kpi-grid">
+        <KPI icon={Wallet} tint={C.primary} label="Ventas del día" n={286400} delta="18%" note="vs. jueves pasado" spark />
+        <KPI icon={ShoppingCart} tint={C.purple} label="Tickets realizados" raw="36" delta="6" note="vs. jueves pasado" />
+        <KPI icon={Package} tint={C.blue} label="Productos vendidos" raw="124" delta="15" note="vs. jueves pasado" />
+        <KPI icon={AlertTriangle} tint={C.red} label="Stock crítico" raw="8" critical />
+      </div>
+
+      {/* chart + assistant */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 16 }} className="mid-grid">
+        <Panel style={{ padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Ventas por hora</div>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 9, padding: "6px 12px", fontSize: 12.5, color: C.sub }}>Hoy ▾</div>
+          </div>
+          <ResponsiveContainer width="100%" height={230}>
+            <BarChart data={HOURLY} margin={{ top: 20, right: 0, left: -18, bottom: 0 }}>
+              <XAxis dataKey="h" stroke={C.faint} fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis stroke={C.faint} fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v / 1000}k`} />
+              <Tooltip cursor={{ fill: "rgba(255,255,255,.03)" }}
+                content={({ active, payload, label }) =>
+                  active && payload?.length ? (
+                    <div style={{ background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10, padding: "8px 12px", textAlign: "center" }}>
+                      <div style={{ fontSize: 11, color: C.sub }}>{label}:00 hs</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{money(payload[0].value)}</div>
+                    </div>
+                  ) : null} />
+              <Bar dataKey="v" radius={[5, 5, 0, 0]} animationDuration={900} barSize={16}>
+                {HOURLY.map((e, i) => <Cell key={i} fill={e.h === "19" ? C.primary : "rgba(251,191,36,.55)"} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </Panel>
+
+        <Panel style={{ padding: 20 }}>
+          <SectionHead icon={Sparkles} title="Asistente de negocios" action="Ver todos" />
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {INSIGHTS.map((ins, i) => (
+              <motion.div key={i} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.08 }}
+                style={{ display: "flex", gap: 12, alignItems: "flex-start", background: C.card, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: `${ins.color}22`, display: "grid", placeItems: "center", flexShrink: 0 }}>
+                  <ins.icon size={15} color={ins.color} />
+                </div>
+                <div style={{ fontSize: 12.5, color: C.text, lineHeight: 1.4 }}>
+                  {ins.text}{ins.sub && <div style={{ color: C.sub, fontSize: 12 }}>{ins.sub}</div>}
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+
+      {/* stock quick strip */}
+      <Panel style={{ padding: 20 }}>
+        <SectionHead icon={Package} title="Stock rápido" action="Ver todos" />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }} className="stock-strip">
+          {STOCK_QUICK.map((id, idx) => {
+            const p = byId(id); if (!p) return null;
+            const max = p.byWeight ? 40 : p.unit === "maple" ? 80 : 40;
+            const pct = Math.min(100, (p.stock / max) * 100);
+            const crit = p.byWeight ? p.stock <= 5 : p.stock <= 6;
+            return (
+              <div key={id} style={{ background: C.card, border: `1px solid ${crit ? C.redSoft : C.border}`, borderRadius: 14, padding: 14 }}>
+                <div style={{ width: "100%", height: 72, borderRadius: 10, overflow: "hidden", marginBottom: 10, background: C.card2 }}>
+                  <FullPhoto id={id} />
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{p.name}</div>
+                <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>{p.label}</div>
+                <div style={{ height: 5, background: C.card2, borderRadius: 999, overflow: "hidden" }}>
+                  <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ delay: idx * 0.05 + 0.2, duration: 0.7 }}
+                    style={{ height: "100%", borderRadius: 999, background: crit ? C.red : pct < 40 ? C.primary : C.green }} />
+                </div>
+                {crit && <div style={{ fontSize: 11, color: C.red, fontWeight: 600, marginTop: 6 }}>Stock crítico</div>}
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
+
+      {/* new sale + frequent */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.35fr", gap: 16 }} className="sale-grid">
+        <NewSaleCard cart={cart} setCart={setCart} onAdd={onAdd} />
+        <FrequentGrid onAdd={onAdd} />
+      </div>
+
+      {/* bottom trio */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }} className="trio-grid">
+        <Panel style={{ padding: 20 }}>
+          <SectionHead title="Ventas recientes" action="Ver todas" />
+          {RECENT.map((r) => (
+            <div key={r.n} style={{ display: "flex", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{r.n}</div>
+                <div style={{ fontSize: 11.5, color: C.faint }}>{r.t}</div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginRight: 14, fontVariantNumeric: "tabular-nums" }}>{money(r.v)}</div>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: r.c }}>{r.m}</span>
+            </div>
+          ))}
+        </Panel>
+
+        <Panel style={{ padding: 20 }}>
+          <SectionHead title="Clientes frecuentes" action="Ver todos" />
+          {CLIENTS.map((c) => (
+            <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ width: 32, height: 32, borderRadius: 999, background: C.card, border: `1px solid ${C.border2}`, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: C.sub }}>{c.name[0]}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{c.name}</div>
+                <div style={{ fontSize: 11.5, color: C.faint }}>{c.buys} compras</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(c.v)}</div>
+                <div style={{ fontSize: 11, color: C.faint }}>Última: {c.last}</div>
+              </div>
+            </div>
+          ))}
+        </Panel>
+
+        <Panel style={{ padding: 20 }}>
+          <SectionHead title="Top productos" action="Ver todos" />
+          {TOP.map((t, i) => {
+            const p = byId(t.id) || { name: t.id };
+            return (
+              <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.faint, width: 14 }}>{i + 1}</div>
+                <Photo id={t.id} size={30} />
+                <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: C.text }}>{p.name}</div>
+                <div style={{ fontSize: 12, color: C.sub, marginRight: 12, fontVariantNumeric: "tabular-nums" }}>{t.qty}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(t.v)}</div>
+              </div>
+            );
+          })}
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function FullPhoto({ id }) {
+  const store = useStore();
+  const [err, setErr] = useState(false);
+  useEffect(() => setErr(false), [id]);
+  const url = store?.products.find((p) => p.id === id)?.photo || IMG[id];
+  if (err || !url) return <div style={{ width: "100%", height: "100%", display: "grid", placeItems: "center", fontSize: 34 }}>{EMO[id]}</div>;
+  return <img src={url} onError={() => setErr(true)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />;
+}
+
+function KPI({ icon: Icon, tint, label, n, raw, delta, note, spark, critical }) {
+  const v = useCountUp(n || 0);
+  return (
+    <Panel style={{ padding: 20, position: "relative", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+        <div style={{ width: 30, height: 30, borderRadius: 9, background: `${tint}22`, display: "grid", placeItems: "center" }}>
+          <Icon size={16} color={tint} />
+        </div>
+        <span style={{ fontSize: 12.5, color: C.sub }}>{label}</span>
+      </div>
+      <div style={{ fontSize: 32, fontWeight: 800, color: critical ? C.red : C.text, letterSpacing: "-.02em", lineHeight: 1 }}>
+        {raw ? raw : money(v)}
+      </div>
+      {critical ? (
+        <button style={{ background: "none", border: "none", color: C.sub, fontSize: 12.5, cursor: "pointer", marginTop: 12, padding: 0, display: "flex", alignItems: "center", gap: 4 }}>
+          Ver productos <ChevronRight size={13} />
+        </button>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 12, fontWeight: 700, color: C.green, background: C.greenSoft, padding: "2px 7px", borderRadius: 6 }}>
+            <ArrowUp size={12} /> {delta}
+          </span>
+          <span style={{ fontSize: 11.5, color: C.faint }}>{note}</span>
+        </div>
+      )}
+      {spark && (
+        <svg width="80" height="34" viewBox="0 0 80 34" style={{ position: "absolute", right: 16, top: 44 }}>
+          <polyline points="0,26 12,22 24,24 36,14 48,18 60,6 72,10 80,4" fill="none" stroke={C.primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+    </Panel>
+  );
+}
+
+/* ============================================================
+   MARGIN CALCULATOR (shared)  — cost + % → price, o precio → %
+   ============================================================ */
+function MarginCalc({ cost, price, setPrice, compact }) {
+  // margen = ganancia sobre precio de venta ; markup = ganancia sobre costo
+  const c = Number(cost) || 0;
+  const pr = Number(price) || 0;
+  const [mode, setMode] = useState("markup"); // "markup" = fijás % sobre costo
+  const [pct, setPct] = useState(() => (c > 0 ? Math.round(((pr - c) / c) * 100) : 50));
+
+  // cuando cambia el % o el costo, recalcula el precio
+  const applyPct = (p) => {
+    setPct(p);
+    const np = mode === "markup" ? c * (1 + p / 100) : c / (1 - Math.min(0.99, p / 100));
+    setPrice(Math.round(np));
+  };
+  // si el usuario edita el precio a mano, recalcula el %
+  useEffect(() => {
+    if (c <= 0 || pr <= 0) return;
+    const newPct = mode === "markup" ? ((pr - c) / c) * 100 : ((pr - c) / pr) * 100;
+    setPct(Math.round(newPct));
+  }, [pr, c, mode]);
+
+  const profit = pr - c;
+  const margin = pr > 0 ? (profit / pr) * 100 : 0;   // sobre venta
+  const markup = c > 0 ? (profit / c) * 100 : 0;      // sobre costo
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+        <Calculator size={15} color={C.primary} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Calculadora de ganancia</span>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, background: C.card2, borderRadius: 10, padding: 4 }}>
+        {[["markup", "% sobre costo"], ["margin", "% sobre venta"]].map(([m, l]) => (
+          <button key={m} onClick={() => setMode(m)}
+            style={{ flex: 1, padding: "7px 0", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
+              background: mode === m ? C.primarySoft : "transparent", color: mode === m ? C.primary : C.sub }}>{l}</button>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <Percent size={14} color={C.sub} />
+        <input type="number" value={pct} onChange={(e) => applyPct(Number(e.target.value))}
+          style={{ flex: 1, background: C.bg, border: `1px solid ${C.border2}`, borderRadius: 10, padding: "10px 12px", fontSize: 15, fontWeight: 700, color: C.text, outline: "none", fontVariantNumeric: "tabular-nums" }} />
+        <span style={{ fontSize: 13, color: C.sub }}>%</span>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        {[30, 40, 50, 70, 100].map((q) => (
+          <button key={q} onClick={() => applyPct(q)}
+            style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 0", color: C.sub, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{q}%</button>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8 }}>
+        <CalcCell l="Costo" v={money(c)} />
+        <CalcCell l="Precio de venta" v={money(pr)} accent />
+        <CalcCell l="Ganancia" v={money(profit)} good={profit > 0} />
+        <CalcCell l={mode === "markup" ? "Margen s/ venta" : "Markup s/ costo"} v={`${Math.round(mode === "markup" ? margin : markup)}%`} />
+      </div>
+    </div>
+  );
+}
+const CalcCell = ({ l, v, accent, good }) => (
+  <div style={{ background: C.bg, borderRadius: 10, padding: "9px 11px" }}>
+    <div style={{ fontSize: 10.5, color: C.faint, textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 3 }}>{l}</div>
+    <div style={{ fontSize: 15, fontWeight: 700, color: good ? C.green : accent ? C.primary : C.text, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+  </div>
+);
+
+/* ============================================================
+   PRODUCT EDITOR (alta / edición con foto real)
+   ============================================================ */
+function ProductEditor({ product, onClose }) {
+  const { setProducts } = useStore();
+  const isNew = !product;
+  const [form, setForm] = useState(
+    product || { id: "p" + Date.now(), name: "", cost: 0, price: 0, stock: 0, unit: "kg", byWeight: true, prov: "", photo: null }
+  );
+  const [file, setFile] = useState(null); // archivo original para subir a Storage
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef();
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const onFile = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    const reader = new FileReader();
+    reader.onload = () => set("photo", reader.result); // preview local inmediato
+    reader.readAsDataURL(f);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      let photoUrl = form.photo;
+      if (file) photoUrl = await subirFoto(file, form.id); // sube a Supabase Storage (o dataURL en demo)
+      const clean = {
+        ...form, photo: photoUrl, cost: Number(form.cost), price: Number(form.price), stock: Number(form.stock),
+        label: `${form.stock} ${form.unit === "maple" ? "maples" : form.unit}`,
+      };
+      await upsertProducto(clean); // guarda en la base
+      setProducts((prev) => isNew ? [...prev, clean] : prev.map((p) => p.id === clean.id ? clean : p));
+      onClose();
+    } catch (err) {
+      alert("No se pudo guardar el producto. Revisá la conexión con Supabase.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(3,7,18,.75)", backdropFilter: "blur(6px)", zIndex: 80, display: "grid", placeItems: "center", padding: 20 }}>
+      <motion.div onClick={(e) => e.stopPropagation()} initial={{ scale: 0.95, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 12 }}
+        transition={{ type: "spring", stiffness: 360, damping: 28 }}
+        style={{ width: "100%", maxWidth: 760, maxHeight: "90vh", overflowY: "auto", background: C.panel, border: `1px solid ${C.border2}`, borderRadius: 22, padding: 26, boxShadow: "0 24px 64px rgba(0,0,0,.5)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>{isNew ? "Nuevo producto" : "Editar producto"}</div>
+          <button onClick={onClose} style={iconBtn}><X size={17} color={C.sub} /></button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 20 }} className="editor-grid">
+          {/* photo uploader */}
+          <div>
+            <div onClick={() => fileRef.current?.click()}
+              style={{ width: "100%", aspectRatio: "1", borderRadius: 16, border: `1.5px dashed ${C.border2}`, background: C.card, display: "grid", placeItems: "center", cursor: "pointer", overflow: "hidden", position: "relative" }}>
+              {form.photo || IMG[form.id] ? (
+                <img src={form.photo || IMG[form.id]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : (
+                <div style={{ textAlign: "center", color: C.sub }}>
+                  <ImagePlus size={30} style={{ margin: "0 auto 8px" }} />
+                  <div style={{ fontSize: 12 }}>Subir foto</div>
+                </div>
+              )}
+            </div>
+            <input ref={fileRef} type="file" accept="image/*" onChange={onFile} style={{ display: "none" }} />
+            <button onClick={() => fileRef.current?.click()}
+              style={{ width: "100%", marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10, padding: "9px", color: C.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+              <Upload size={14} /> {form.photo ? "Cambiar foto" : "Elegir de tu compu"}
+            </button>
+          </div>
+
+          {/* fields */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <Field label="Nombre del producto">
+              <input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Ej: Pollo entero" style={inp} />
+            </Field>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="Costo de compra">
+                <input type="number" value={form.cost} onChange={(e) => set("cost", e.target.value)} style={inp} />
+              </Field>
+              <Field label="Precio de venta">
+                <input type="number" value={form.price} onChange={(e) => set("price", e.target.value)} style={inp} />
+              </Field>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <Field label="Stock">
+                <input type="number" value={form.stock} onChange={(e) => set("stock", e.target.value)} style={inp} />
+              </Field>
+              <Field label="Unidad">
+                <select value={form.unit} onChange={(e) => { const u = e.target.value; set("unit", u); set("byWeight", u === "kg"); }} style={inp}>
+                  <option value="kg">kg</option><option value="u">unidad</option><option value="maple">maple</option><option value="paquete">paquete</option>
+                </select>
+              </Field>
+              <Field label="Proveedor">
+                <input value={form.prov} onChange={(e) => set("prov", e.target.value)} placeholder="Proveedor" style={inp} />
+              </Field>
+            </div>
+            <MarginCalc cost={form.cost} price={form.price} setPrice={(v) => set("price", v)} />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
+          <button onClick={onClose} style={{ background: C.card, border: `1px solid ${C.border2}`, borderRadius: 11, padding: "12px 20px", color: C.text, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>Cancelar</button>
+          <button onClick={save} disabled={!form.name || saving} style={{ ...cobrarBtn, opacity: (form.name && !saving) ? 1 : 0.5 }}><Save size={16} /> {saving ? "Guardando..." : "Guardar producto"}</button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+const Field = ({ label, children }) => (
+  <label style={{ display: "block" }}>
+    <div style={{ fontSize: 12, color: C.sub, marginBottom: 6, fontWeight: 500 }}>{label}</div>
+    {children}
+  </label>
+);
+
+/* ============================================================
+   PRODUCTS SCREEN
+   ============================================================ */
+function ProductsScreen() {
+  const { products } = useStore();
+  const [editing, setEditing] = useState(null); // product | "new" | null
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Productos</h1>
+          <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>{products.length} productos · tocá uno para editar o subir su foto real</p>
+        </div>
+        <button onClick={() => setEditing("new")} style={{ ...cobrarBtn }}><Plus size={16} /> Nuevo producto</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+        {products.map((p, idx) => {
+          const margin = p.price > 0 ? Math.round(((p.price - p.cost) / p.price) * 100) : 0;
+          return (
+            <motion.div key={p.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.02 }}>
+              <Panel style={{ padding: 16 }}>
+                <div style={{ display: "flex", gap: 13, marginBottom: 14 }}>
+                  <Photo id={p.id} size={60} radius={14} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14.5, fontWeight: 700, color: C.text }}>{p.name}</div>
+                    <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{p.prov || "Sin proveedor"}</div>
+                    <div style={{ fontSize: 11.5, color: C.faint, marginTop: 2 }}>{p.stock} {p.unit} en stock</div>
+                  </div>
+                  <button onClick={() => setEditing(p)} style={iconBtn}><Pencil size={15} color={C.sub} /></button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                  <Metric l="Costo" v={money(p.cost)} />
+                  <Metric l="Precio" v={money(p.price)} accent />
+                  <Metric l="Margen" v={`${margin}%`} good={margin > 30} />
+                </div>
+              </Panel>
+            </motion.div>
+          );
+        })}
+      </div>
+      <AnimatePresence>
+        {editing && <ProductEditor product={editing === "new" ? null : editing} onClose={() => setEditing(null)} />}
+      </AnimatePresence>
+    </div>
+  );
+}
+const Metric = ({ l, v, accent, good }) => (
+  <div style={{ background: C.card, borderRadius: 10, padding: "9px 11px" }}>
+    <div style={{ fontSize: 10.5, color: C.faint, textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 3 }}>{l}</div>
+    <div style={{ fontSize: 15, fontWeight: 700, color: good ? C.green : accent ? C.primary : C.text, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+  </div>
+);
+
+/* ============================================================
+   COMPRAS SCREEN (con calculadora de precio/margen)
+   ============================================================ */
+function ComprasScreen() {
+  const { products, setProducts } = useStore();
+  const [sel, setSel] = useState(products[0]?.id || "");
+  const [qty, setQty] = useState(10);
+  const [unitCost, setUnitCost] = useState(products[0]?.cost || 0);
+  const [price, setPrice] = useState(products[0]?.price || 0);
+  const [log, setLog] = useState([]);
+
+  const p = products.find((x) => x.id === sel);
+  useEffect(() => { if (p) { setUnitCost(p.cost); setPrice(p.price); } }, [sel]); // eslint-disable-line
+
+  const total = qty * unitCost;
+  const register = async () => {
+    if (!p) return;
+    const updated = { ...p, cost: Number(unitCost), price: Number(price),
+      stock: p.stock + Number(qty), label: `${p.stock + Number(qty)} ${p.unit === "maple" ? "maples" : p.unit}` };
+    setProducts((prev) => prev.map((x) => x.id === sel ? updated : x));
+    setLog((l) => [{ id: Date.now(), name: p.name, qty, unitCost, total, when: "Recién" }, ...l]);
+    try {
+      await registrarCompra({ pid: sel, name: p.name, qty, unitCost, total }); // guarda la compra
+      await upsertProducto(updated); // actualiza costo/precio/stock del producto
+    } catch (e) { /* modo demo: sigue local */ }
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 18 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Compras</h1>
+        <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>Registrá una compra y calculá a cuánto venderla</p>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="mid-grid">
+        <Panel style={{ padding: 20 }}>
+          <SectionHead icon={Download} title="Registrar compra" />
+          <Field label="Producto">
+            <select value={sel} onChange={(e) => setSel(e.target.value)} style={inp}>
+              {products.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            </select>
+          </Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+            <Field label={`Cantidad (${p?.unit || ""})`}>
+              <input type="number" value={qty} onChange={(e) => setQty(Number(e.target.value))} style={inp} />
+            </Field>
+            <Field label="Costo unitario">
+              <input type="number" value={unitCost} onChange={(e) => setUnitCost(Number(e.target.value))} style={inp} />
+            </Field>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", background: C.card, borderRadius: 12, padding: "13px 16px", margin: "14px 0" }}>
+            <span style={{ fontSize: 13, color: C.sub }}>Total de la compra</span>
+            <span style={{ fontSize: 22, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(total)}</span>
+          </div>
+          <button onClick={register} style={{ ...cobrarBtn, width: "100%", justifyContent: "center" }}><PackageCheck size={17} /> Registrar y sumar al stock</button>
+        </Panel>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <MarginCalc cost={unitCost} price={price} setPrice={setPrice} />
+          <Panel style={{ padding: 20, flex: 1 }}>
+            <SectionHead icon={Clock} title="Compras registradas" />
+            {!log.length ? (
+              <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Todavía no registraste compras</div>
+            ) : log.map((l) => (
+              <div key={l.id} style={{ display: "flex", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{l.name}</div>
+                  <div style={{ fontSize: 11.5, color: C.faint }}>{l.qty} × {money(l.unitCost)} · {l.when}</div>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(l.total)}</div>
+              </div>
+            ))}
+          </Panel>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   PEDIDOS DE STOCK SCREEN
+   ============================================================ */
+const ORDER_STATES = {
+  pendiente: { label: "Pendiente", color: C.primary, icon: Clock },
+  pedido: { label: "Pedido", color: C.blue, icon: TruckIcon },
+  recibido: { label: "Recibido", color: C.green, icon: PackageCheck },
+};
+function PedidosScreen() {
+  const { products, setProducts } = useStore();
+  const suggested = products.filter((p) => p.byWeight ? p.stock <= 8 : p.stock <= 10);
+  const [orders, setOrders] = useState([]);
+  const [adding, setAdding] = useState(false);
+  const [newPid, setNewPid] = useState(products[0]?.id || "");
+  const [newQty, setNewQty] = useState(10);
+
+  // cargar pedidos guardados; si no hay ninguno, precargar sugeridos
+  useEffect(() => {
+    (async () => {
+      const saved = await fetchPedidos();
+      if (saved.length) setOrders(saved);
+      else setOrders(suggested.slice(0, 4).map((p) => ({ id: "o" + p.id, pid: p.id, name: p.name, prov: p.prov, qty: p.byWeight ? 20 : 24, unit: p.unit, state: "pendiente" })));
+    })();
+  }, []); // eslint-disable-line
+
+  const cycle = (id) => setOrders((o) => o.map((x) => {
+    if (x.id !== id) return x;
+    const next = x.state === "pendiente" ? "pedido" : x.state === "pedido" ? "recibido" : "pendiente";
+    actualizarPedido(id, next);
+    return { ...x, state: next };
+  }));
+
+  const receive = async (order) => {
+    const updated = { ...products.find((p) => p.id === order.pid) };
+    if (updated.id) {
+      updated.stock = updated.stock + order.qty;
+      updated.label = `${updated.stock} ${updated.unit === "maple" ? "maples" : updated.unit}`;
+      setProducts((prev) => prev.map((p) => p.id === order.pid ? updated : p));
+      try { await upsertProducto(updated); } catch (e) {}
+    }
+    setOrders((o) => o.map((x) => x.id === order.id ? { ...x, state: "recibido" } : x));
+    actualizarPedido(order.id, "recibido");
+  };
+
+  const addOrder = async () => {
+    const p = products.find((x) => x.id === newPid);
+    if (!p) return;
+    const nuevo = { pid: p.id, name: p.name, prov: p.prov, qty: newQty, unit: p.unit, state: "pendiente" };
+    const saved = await crearPedido(nuevo);
+    setOrders((o) => [saved, ...o]);
+    setAdding(false);
+  };
+
+  const counts = {
+    pendiente: orders.filter((o) => o.state === "pendiente").length,
+    pedido: orders.filter((o) => o.state === "pedido").length,
+    recibido: orders.filter((o) => o.state === "recibido").length,
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Pedidos de stock</h1>
+          <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>Lo que hay que reponer, a quién pedírselo y en qué estado va</p>
+        </div>
+        <button onClick={() => setAdding(true)} style={cobrarBtn}><Plus size={16} /> Nuevo pedido</button>
+      </div>
+
+      {/* status summary */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 16 }} className="kpi-grid">
+        {Object.entries(ORDER_STATES).map(([k, s]) => (
+          <Panel key={k} style={{ padding: 16, display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 11, background: `${s.color}22`, display: "grid", placeItems: "center" }}><s.icon size={18} color={s.color} /></div>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>{counts[k]}</div>
+              <div style={{ fontSize: 12, color: C.sub }}>{s.label}</div>
+            </div>
+          </Panel>
+        ))}
+      </div>
+
+      {adding && (
+        <Panel style={{ padding: 16, marginBottom: 16, display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div style={{ flex: 2, minWidth: 180 }}>
+            <Field label="Producto">
+              <select value={newPid} onChange={(e) => setNewPid(e.target.value)} style={inp}>
+                {products.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div style={{ flex: 1, minWidth: 100 }}>
+            <Field label="Cantidad"><input type="number" value={newQty} onChange={(e) => setNewQty(Number(e.target.value))} style={inp} /></Field>
+          </div>
+          <button onClick={addOrder} style={cobrarBtn}><Check size={16} /> Agregar</button>
+          <button onClick={() => setAdding(false)} style={{ background: C.card, border: `1px solid ${C.border2}`, borderRadius: 11, padding: "12px 16px", color: C.sub, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+        </Panel>
+      )}
+
+      <Panel style={{ padding: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1.4fr 1fr 1.2fr auto", gap: 12, padding: "12px 14px", fontSize: 11.5, color: C.faint, textTransform: "uppercase", letterSpacing: ".04em", borderBottom: `1px solid ${C.border}` }} className="ped-head">
+          <span>Producto</span><span>Proveedor</span><span>Cantidad</span><span>Estado</span><span></span>
+        </div>
+        <AnimatePresence>
+          {orders.map((o) => {
+            const st = ORDER_STATES[o.state];
+            return (
+              <motion.div key={o.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, x: 20 }}
+                style={{ display: "grid", gridTemplateColumns: "2fr 1.4fr 1fr 1.2fr auto", gap: 12, alignItems: "center", padding: "12px 14px", borderBottom: `1px solid ${C.border}` }} className="ped-row">
+                <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                  <Photo id={o.pid} size={38} />
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text }}>{o.name}</span>
+                </div>
+                <span style={{ fontSize: 13, color: C.sub }}>{o.prov || "—"}</span>
+                <span style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{o.qty} {o.unit}</span>
+                <button onClick={() => cycle(o.id)} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: `${st.color}1c`, border: "none", borderRadius: 999, padding: "5px 11px", cursor: "pointer", width: "fit-content" }}>
+                  <st.icon size={13} color={st.color} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: st.color }}>{st.label}</span>
+                </button>
+                <button onClick={() => receive(o)} disabled={o.state === "recibido"}
+                  style={{ background: o.state === "recibido" ? C.card : C.green, color: o.state === "recibido" ? C.faint : "#06210F", border: "none", borderRadius: 9, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: o.state === "recibido" ? "default" : "pointer", whiteSpace: "nowrap" }}>
+                  {o.state === "recibido" ? "✓ En stock" : "Marcar recibido"}
+                </button>
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+        {!orders.length && <div style={{ padding: 30, textAlign: "center", color: C.faint, fontSize: 13 }}>No hay pedidos cargados</div>}
+      </Panel>
+    </div>
+  );
+}
+
+/* ============================================================
+   PLACEHOLDER
+   ============================================================ */
+function Placeholder({ title, icon: Icon }) {
+  return (
+    <Panel style={{ padding: 60, display: "grid", placeItems: "center", textAlign: "center" }}>
+      <div style={{ width: 60, height: 60, borderRadius: 18, background: C.primarySoft, display: "grid", placeItems: "center", marginBottom: 14 }}>
+        <Icon size={28} color={C.primary} />
+      </div>
+      <div style={{ fontSize: 17, fontWeight: 700, color: C.text, marginBottom: 5 }}>{title}</div>
+      <div style={{ fontSize: 13, color: C.sub, maxWidth: 340 }}>Módulo listo para conectar a Supabase. La estructura ya funciona.</div>
+    </Panel>
+  );
+}
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+function Sidebar({ active, setActive }) {
+  return (
+    <aside className="sidebar" style={{ width: 210, flexShrink: 0, background: C.panel, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", padding: "18px 12px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px 18px" }}>
+        <div style={{ width: 38, height: 38, borderRadius: 12, background: C.primarySoft, border: `1px solid rgba(251,191,36,.3)`, display: "grid", placeItems: "center", fontSize: 20 }}>🐔</div>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.text, lineHeight: 1 }}>Pollería</div>
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>MiniService</div>
+        </div>
+      </div>
+      <nav style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, overflowY: "auto" }}>
+        {NAV.map((n) => {
+          const on = active === n.id;
+          return (
+            <button key={n.id} onClick={() => setActive(n.id)}
+              style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 11, border: "none", cursor: "pointer",
+                background: on ? C.primarySoft : "transparent", color: on ? C.primary : C.sub, fontSize: 13.5, fontWeight: on ? 700 : 500, textAlign: "left" }}>
+              <n.icon size={17} /> {n.label}
+            </button>
+          );
+        })}
+      </nav>
+      <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 14, marginTop: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "0 4px" }}>
+          <div style={{ width: 34, height: 34, borderRadius: 999, background: C.card, border: `1px solid ${C.border2}`, display: "grid", placeItems: "center", fontSize: 13, fontWeight: 700, color: C.sub }}>M</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Marta</div>
+            <div style={{ fontSize: 11, color: C.faint }}>Propietaria</div>
+          </div>
+        </div>
+        <div style={{ background: C.card, borderRadius: 12, padding: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>Caja del día</div>
+          {[["Ingresos", 286400, C.text], ["Egresos", 72900, C.text], ["Ganancia", 213500, C.green]].map(([l, v, col]) => (
+            <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
+              <span style={{ color: C.sub }}>{l}</span>
+              <span style={{ color: col, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{money(v)}</span>
+            </div>
+          ))}
+          <button style={{ width: "100%", marginTop: 8, background: C.card2, border: `1px solid ${C.border2}`, borderRadius: 9, padding: "8px", color: C.sub, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>🔒 Cerrar caja</button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+/* ============================================================
+   TOPBAR
+   ============================================================ */
+function Topbar() {
+  return (
+    <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", gap: 20 }}>
+      <div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, display: "flex", alignItems: "center", gap: 8, letterSpacing: "-.01em" }}>
+          Buenos días, Marta <span style={{ fontSize: 18 }}>👋</span>
+        </div>
+        <div style={{ fontSize: 13, color: C.sub, marginTop: 2 }}>Viernes, 29 de Julio</div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ position: "relative", width: 260 }} className="topsearch">
+          <Search size={16} color={C.faint} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
+          <input placeholder="Buscar productos..."
+            style={{ width: "100%", background: C.panel, border: `1px solid ${C.border}`, borderRadius: 11, padding: "10px 42px 10px 38px", fontSize: 13, color: C.text, outline: "none" }} />
+          <kbd style={kbdRight}>⌘K</kbd>
+        </div>
+        <button style={{ ...iconBtn, width: 40, height: 40, position: "relative" }}>
+          <Bell size={17} color={C.sub} />
+          <span style={{ position: "absolute", top: 9, right: 10, width: 7, height: 7, borderRadius: 999, background: C.red }} />
+        </button>
+        <button style={{ display: "flex", alignItems: "center", gap: 7, background: C.primary, color: "#1A1206", border: "none", borderRadius: 11, padding: "10px 16px", fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>
+          <Plus size={16} /> Nueva venta
+        </button>
+      </div>
+    </header>
+  );
+}
+
+/* ============================================================
+   ROOT
+   ============================================================ */
+export default function App() {
+  const [active, setActive] = useState("dashboard");
+  const [products, setProducts] = useState(SEED_PRODUCTS);
+  const [loading, setLoading] = useState(true);
+  const [cart, setCart] = useState([
+    { ...P("pollo"), qty: 1.5 }, { ...P("milanesa"), qty: 1 },
+    { ...P("papasfritas"), qty: 1 }, { ...P("coca"), qty: 1 },
+  ]);
+  const [weightP, setWeightP] = useState(null);
+
+  // Cargar productos desde Supabase al abrir la app
+  useEffect(() => {
+    (async () => {
+      const data = await fetchProductos();
+      if (data?.length) setProducts(data);
+      setLoading(false);
+    })();
+  }, []);
+
+  const addToCart = useCallback((p, kg) => {
+    setCart((prev) => {
+      const qty = kg ?? 1;
+      const f = prev.find((i) => i.id === p.id);
+      if (f) return prev.map((i) => i.id === p.id ? { ...i, qty: +(i.qty + qty).toFixed(3) } : i);
+      return [...prev, { ...p, qty }];
+    });
+  }, []);
+  const onAdd = (p) => p.byWeight ? setWeightP(p) : addToCart(p);
+
+  const view = () => {
+    switch (active) {
+      case "dashboard": return <Dashboard cart={cart} setCart={setCart} onAdd={onAdd} />;
+      case "productos": return <ProductsScreen />;
+      case "compras": return <ComprasScreen />;
+      case "pedidos": return <PedidosScreen />;
+      default: {
+        const n = NAV.find((x) => x.id === active);
+        return <Placeholder title={n.label} icon={n.icon} />;
+      }
+    }
+  };
+
+  return (
+    <Store.Provider value={{ products, setProducts }}>
+    <div style={{ display: "flex", height: "100vh", width: "100%", background: C.bg, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", overflow: "hidden" }}>
+      <style>{`
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.08); border-radius: 999px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        input::placeholder { color: ${C.faint}; }
+        @media (max-width: 1200px) {
+          .kpi-grid { grid-template-columns: repeat(2,1fr) !important; }
+          .mid-grid, .sale-grid { grid-template-columns: 1fr !important; }
+          .trio-grid { grid-template-columns: 1fr !important; }
+          .stock-strip { grid-template-columns: repeat(3,1fr) !important; }
+          .freq-grid { grid-template-columns: repeat(3,1fr) !important; }
+        }
+        @media (max-width: 900px) {
+          .editor-grid { grid-template-columns: 1fr !important; }
+          .ped-head { display: none !important; }
+          .ped-row { grid-template-columns: 1fr auto !important; row-gap: 8px !important; }
+        }
+        @media (max-width: 780px) {
+          .sidebar { display: none !important; }
+          .topsearch { display: none !important; }
+          .stock-strip, .freq-grid { grid-template-columns: repeat(2,1fr) !important; }
+        }
+        select { appearance: none; -webkit-appearance: none; }
+        select option { background: ${C.panel}; color: ${C.text}; }
+      `}</style>
+
+      <Sidebar active={active} setActive={setActive} />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <Topbar />
+        {!supabaseReady && (
+          <div style={{ margin: "0 24px 12px", background: "rgba(251,191,36,.12)", border: "1px solid rgba(251,191,36,.3)", borderRadius: 12, padding: "10px 16px", fontSize: 12.5, color: "#FBBF24" }}>
+            Modo demo — todavía no conectaste Supabase. Los cambios no se guardan. Completá <b>.env.local</b> con tus claves para activar la memoria.
+          </div>
+        )}
+        <main style={{ flex: 1, overflowY: "auto", padding: "0 24px 24px" }}>
+          <AnimatePresence mode="wait">
+            <motion.div key={active} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+              {view()}
+            </motion.div>
+          </AnimatePresence>
+        </main>
+      </div>
+
+      <AnimatePresence>
+        {weightP && <WeightModal product={weightP} onClose={() => setWeightP(null)} onConfirm={(kg) => { addToCart(weightP, kg); setWeightP(null); }} />}
+      </AnimatePresence>
+    </div>
+    </Store.Provider>
+  );
+}
+
+/* ============================================================
+   SHARED STYLES
+   ============================================================ */
+const iconBtn = { width: 32, height: 32, borderRadius: 9, background: C.panel, border: `1px solid ${C.border}`, display: "grid", placeItems: "center", cursor: "pointer" };
+const qtyBtn = { width: 24, height: 24, borderRadius: 7, background: C.card2, border: `1px solid ${C.border2}`, display: "grid", placeItems: "center", cursor: "pointer" };
+const cobrarBtn = { display: "flex", alignItems: "center", gap: 8, background: C.primary, color: "#1A1206", border: "none", borderRadius: 12, padding: "13px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer" };
+const kbdRight = { position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: C.faint, background: C.card2, border: `1px solid ${C.border}`, padding: "3px 7px", borderRadius: 6 };
+const inp = { width: "100%", background: C.bg, border: `1px solid ${C.border2}`, borderRadius: 10, padding: "11px 13px", fontSize: 14, color: C.text, outline: "none", fontFamily: "inherit" };
