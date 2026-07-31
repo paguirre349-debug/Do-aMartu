@@ -12,6 +12,7 @@ import {
   LayoutGrid, ShoppingCart, Beef, Package, Download, Users, Truck, Wallet,
   TrendingUp, Target, Bot, Search, Plus, Minus, X, Scale, Check, Zap,
   Bell, AlertTriangle, ArrowUp, TrendingDown, Sparkles, Lightbulb, Trash2,
+  Menu, Home,
   Maximize2, ChevronRight, Command, ClipboardList, Upload, Percent,
   Calculator, Pencil, Save, ImagePlus, Clock, Truck as TruckIcon, PackageCheck,
 } from "lucide-react";
@@ -517,7 +518,7 @@ function KPI({ icon: Icon, tint, label, n, raw, delta, note, spark, critical }) 
         </div>
         <span style={{ fontSize: 12.5, color: C.sub }}>{label}</span>
       </div>
-      <div style={{ fontSize: 32, fontWeight: 800, color: critical ? C.red : C.text, letterSpacing: "-.02em", lineHeight: 1 }}>
+      <div className="kpi-value" style={{ fontSize: 32, fontWeight: 800, color: critical ? C.red : C.text, letterSpacing: "-.02em", lineHeight: 1, whiteSpace: "nowrap" }}>
         {raw ? raw : money(v)}
       </div>
       {critical ? (
@@ -525,7 +526,7 @@ function KPI({ icon: Icon, tint, label, n, raw, delta, note, spark, critical }) 
           Ver productos <ChevronRight size={13} />
         </button>
       ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 12, fontWeight: 700, color: C.green, background: C.greenSoft, padding: "2px 7px", borderRadius: 6 }}>
             <ArrowUp size={12} /> {delta}
           </span>
@@ -533,7 +534,7 @@ function KPI({ icon: Icon, tint, label, n, raw, delta, note, spark, critical }) 
         </div>
       )}
       {spark && (
-        <svg width="80" height="34" viewBox="0 0 80 34" style={{ position: "absolute", right: 16, top: 44 }}>
+        <svg className="kpi-spark" width="80" height="34" viewBox="0 0 80 34" style={{ position: "absolute", right: 16, top: 44 }}>
           <polyline points="0,26 12,22 24,24 36,14 48,18 60,6 72,10 80,4" fill="none" stroke={C.primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       )}
@@ -1057,14 +1058,19 @@ function Sidebar({ active, setActive }) {
 /* ============================================================
    TOPBAR
    ============================================================ */
-function Topbar() {
+function Topbar({ setActive, onOpenMenu }) {
   return (
-    <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", gap: 20 }}>
-      <div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: C.text, display: "flex", alignItems: "center", gap: 8, letterSpacing: "-.01em" }}>
-          Buenos días, Marta <span style={{ fontSize: 18 }}>👋</span>
+    <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", gap: 20 }} className="topbar">
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button onClick={onOpenMenu} className="menu-btn" style={{ ...iconBtn, width: 40, height: 40, display: "none" }}>
+          <Menu size={20} color={C.text} />
+        </button>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: C.text, display: "flex", alignItems: "center", gap: 8, letterSpacing: "-.01em" }} className="greeting">
+            Buenos días, Marta <span style={{ fontSize: 18 }}>👋</span>
+          </div>
+          <div style={{ fontSize: 13, color: C.sub, marginTop: 2 }} className="greeting-date">Viernes, 29 de Julio</div>
         </div>
-        <div style={{ fontSize: 13, color: C.sub, marginTop: 2 }}>Viernes, 29 de Julio</div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div style={{ position: "relative", width: 260 }} className="topsearch">
@@ -1073,15 +1079,75 @@ function Topbar() {
             style={{ width: "100%", background: C.panel, border: `1px solid ${C.border}`, borderRadius: 11, padding: "10px 42px 10px 38px", fontSize: 13, color: C.text, outline: "none" }} />
           <kbd style={kbdRight}>⌘K</kbd>
         </div>
-        <button style={{ ...iconBtn, width: 40, height: 40, position: "relative" }}>
-          <Bell size={17} color={C.sub} />
-          <span style={{ position: "absolute", top: 9, right: 10, width: 7, height: 7, borderRadius: 999, background: C.red }} />
-        </button>
-        <button style={{ display: "flex", alignItems: "center", gap: 7, background: C.primary, color: "#1A1206", border: "none", borderRadius: 11, padding: "10px 16px", fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>
-          <Plus size={16} /> Nueva venta
+        <button onClick={() => setActive("ventas")} style={{ display: "flex", alignItems: "center", gap: 7, background: C.primary, color: "#1A1206", border: "none", borderRadius: 11, padding: "10px 16px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+          <Plus size={16} /> <span className="nv-label">Nueva venta</span>
         </button>
       </div>
     </header>
+  );
+}
+
+/* ---- Barra de navegación inferior (solo móvil) ---- */
+function MobileNav({ active, setActive, onOpenMenu }) {
+  const items = [
+    { id: "dashboard", label: "Inicio", icon: Home },
+    { id: "ventas", label: "Vender", icon: ShoppingCart },
+    { id: "productos", label: "Productos", icon: Beef },
+    { id: "stock", label: "Stock", icon: Package },
+  ];
+  return (
+    <nav className="mobilenav" style={{
+      display: "none", position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 40,
+      background: C.panel, borderTop: `1px solid ${C.border2}`,
+      padding: "8px 6px calc(8px + env(safe-area-inset-bottom))",
+      justifyContent: "space-around", alignItems: "center",
+    }}>
+      {items.map((it) => {
+        const on = active === it.id;
+        return (
+          <button key={it.id} onClick={() => setActive(it.id)}
+            style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "4px 10px", color: on ? C.primary : C.sub, flex: 1 }}>
+            <it.icon size={22} />
+            <span style={{ fontSize: 10.5, fontWeight: on ? 700 : 500 }}>{it.label}</span>
+          </button>
+        );
+      })}
+      <button onClick={onOpenMenu}
+        style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "4px 10px", color: C.sub, flex: 1 }}>
+        <Menu size={22} />
+        <span style={{ fontSize: 10.5, fontWeight: 500 }}>Más</span>
+      </button>
+    </nav>
+  );
+}
+
+/* ---- Menú completo deslizable (drawer) para móvil ---- */
+function MobileDrawer({ open, active, setActive, onClose }) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
+            style={{ position: "fixed", inset: 0, background: "rgba(3,7,18,.6)", zIndex: 60 }} />
+          <motion.div initial={{ x: -280 }} animate={{ x: 0 }} exit={{ x: -280 }} transition={{ type: "spring", stiffness: 380, damping: 34 }}
+            style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: 260, zIndex: 61, background: C.panel, borderRight: `1px solid ${C.border2}`, padding: "18px 12px", overflowY: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <img src="/logo.png" alt="Doña Martu" style={{ width: 150, borderRadius: 10 }} />
+              <button onClick={onClose} style={iconBtn}><X size={17} color={C.sub} /></button>
+            </div>
+            {NAV.map((n) => {
+              const on = active === n.id;
+              return (
+                <button key={n.id} onClick={() => { setActive(n.id); onClose(); }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 12px", borderRadius: 11, border: "none", cursor: "pointer", background: on ? C.primarySoft : "transparent", color: on ? C.primary : C.sub, fontSize: 14.5, fontWeight: on ? 700 : 500, textAlign: "left" }}>
+                  <n.icon size={18} /> {n.label}
+                </button>
+              );
+            })}
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -1092,10 +1158,8 @@ export default function App() {
   const [active, setActive] = useState("dashboard");
   const [products, setProducts] = useState(SEED_PRODUCTS);
   const [loading, setLoading] = useState(true);
-  const [cart, setCart] = useState([
-    { ...P("pollo"), qty: 1.5 }, { ...P("milanesa"), qty: 1 },
-    { ...P("papasfritas"), qty: 1 }, { ...P("coca"), qty: 1 },
-  ]);
+  const [drawer, setDrawer] = useState(false);
+  const [cart, setCart] = useState([]);
   const [weightP, setWeightP] = useState(null);
 
   // Cargar productos desde Supabase al abrir la app
@@ -1155,20 +1219,35 @@ export default function App() {
           .sidebar { display: none !important; }
           .topsearch { display: none !important; }
           .stock-strip, .freq-grid { grid-template-columns: repeat(2,1fr) !important; }
+          .menu-btn { display: grid !important; }
+          .mobilenav { display: flex !important; }
+          .topbar { padding: 14px 16px !important; }
+          .greeting { font-size: 16px !important; }
+          .greeting-date { font-size: 11px !important; }
+          .nv-label { display: none !important; }
+          .kpi-grid { gap: 12px !important; }
+          .kpi-value { font-size: 26px !important; }
+          .kpi-spark { display: none !important; }
+          main { padding: 0 16px 90px !important; }
+          .app-main { padding-bottom: 90px !important; }
+        }
+        @media (max-width: 420px) {
+          .kpi-grid { grid-template-columns: 1fr !important; }
         }
         select { appearance: none; -webkit-appearance: none; }
         select option { background: ${C.panel}; color: ${C.text}; }
       `}</style>
 
       <Sidebar active={active} setActive={setActive} />
+      <MobileDrawer open={drawer} active={active} setActive={setActive} onClose={() => setDrawer(false)} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <Topbar />
+        <Topbar setActive={setActive} onOpenMenu={() => setDrawer(true)} />
         {!supabaseReady && (
           <div style={{ margin: "0 24px 12px", background: "rgba(251,191,36,.12)", border: "1px solid rgba(251,191,36,.3)", borderRadius: 12, padding: "10px 16px", fontSize: 12.5, color: "#FBBF24" }}>
             Modo demo — todavía no conectaste Supabase. Los cambios no se guardan. Completá <b>.env.local</b> con tus claves para activar la memoria.
           </div>
         )}
-        <main style={{ flex: 1, overflowY: "auto", padding: "0 24px 24px" }}>
+        <main className="app-main" style={{ flex: 1, overflowY: "auto", padding: "0 24px 24px" }}>
           <AnimatePresence mode="wait">
             <motion.div key={active} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
               {view()}
@@ -1176,6 +1255,7 @@ export default function App() {
           </AnimatePresence>
         </main>
       </div>
+      <MobileNav active={active} setActive={setActive} onOpenMenu={() => setDrawer(true)} />
 
       <AnimatePresence>
         {weightP && <WeightModal product={weightP} onClose={() => setWeightP(null)} onConfirm={(kg) => { addToCart(weightP, kg); setWeightP(null); }} />}
