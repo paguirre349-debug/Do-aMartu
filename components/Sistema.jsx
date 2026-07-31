@@ -7,6 +7,7 @@ import {
   fetchProductos, upsertProducto, subirFoto,
   registrarCompra, registrarVenta, fetchVentas, fetchCompras, deleteCompra, deleteVenta,
   fetchPedidos, crearPedido, actualizarPedido,
+  fetchPromos, crearPromo, borrarPromo,
 } from "@/lib/db";
 import {
   LayoutGrid, ShoppingCart, Beef, Package, Download, Users, Truck, Wallet,
@@ -395,7 +396,7 @@ function Dashboard({ cart, setCart, onAdd, setActive }) {
         <KPI icon={Wallet} tint={C.primary} label="Ventas del día" n={facturacionHoy} spark note={ticketsHoy ? `${ticketsHoy} ${ticketsHoy === 1 ? "venta" : "ventas"} hoy` : "Sin ventas aún"} noDelta />
         <KPI icon={ShoppingCart} tint={C.purple} label="Tickets realizados" raw={String(ticketsHoy)} note="hoy" noDelta />
         <KPI icon={Package} tint={C.blue} label="Productos vendidos" raw={String(Math.round(productosVendidosHoy))} note="hoy" noDelta />
-        <KPI icon={AlertTriangle} tint={C.red} label="Stock crítico" raw={String(criticos)} critical />
+        <KPI icon={AlertTriangle} tint={C.red} label="Stock crítico" raw={String(criticos)} critical onClick={() => setActive("stock")} />
       </div>
 
       {/* chart + assistant */}
@@ -544,7 +545,7 @@ function FullPhoto({ id }) {
   return <img src={url} onError={() => setErr(true)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />;
 }
 
-function KPI({ icon: Icon, tint, label, n, raw, delta, note, spark, critical, noDelta }) {
+function KPI({ icon: Icon, tint, label, n, raw, delta, note, spark, critical, noDelta, onClick }) {
   const v = useCountUp(n || 0);
   return (
     <Panel style={{ padding: 20, position: "relative", overflow: "hidden" }}>
@@ -558,7 +559,7 @@ function KPI({ icon: Icon, tint, label, n, raw, delta, note, spark, critical, no
         {raw ? raw : money(v)}
       </div>
       {critical ? (
-        <button style={{ background: "none", border: "none", color: C.sub, fontSize: 12.5, cursor: "pointer", marginTop: 12, padding: 0, display: "flex", alignItems: "center", gap: 4 }}>
+        <button onClick={onClick} style={{ background: "none", border: "none", color: onClick ? C.red : C.sub, fontSize: 12.5, cursor: "pointer", marginTop: 12, padding: 0, display: "flex", alignItems: "center", gap: 4, fontWeight: onClick ? 600 : 400 }}>
           Ver productos <ChevronRight size={13} />
         </button>
       ) : noDelta ? (
@@ -1319,7 +1320,11 @@ function StockScreen() {
         </Panel>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 16 }}>
-          {products.map((p, idx) => {
+          {[...products].sort((a, b) => {
+            const ca = a.byWeight ? a.stock <= 5 : a.stock <= 6;
+            const cb = b.byWeight ? b.stock <= 5 : b.stock <= 6;
+            return (cb ? 1 : 0) - (ca ? 1 : 0);
+          }).map((p, idx) => {
             const max = p.byWeight ? 40 : p.unit === "maple" ? 80 : 40;
             const pct = Math.min(100, (p.stock / max) * 100);
             const crit = p.byWeight ? p.stock <= 5 : p.stock <= 6;
@@ -1544,6 +1549,236 @@ function ReportesScreen() {
           );
         })}
       </Panel>
+    </div>
+  );
+}
+
+/* ============================================================
+   PROMOCIONES (combos, descuentos, ofertas)
+   ============================================================ */
+function PromosScreen() {
+  const { products } = useStore();
+  const [promos, setPromos] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [creando, setCreando] = useState(false);
+  const [nombre, setNombre] = useState("");
+  const [tipo, setTipo] = useState("combo");
+  const [seleccion, setSeleccion] = useState([]); // [{id, qty}]
+  const [precio, setPrecio] = useState(0);
+
+  useEffect(() => { (async () => { setPromos(await fetchPromos()); setCargando(false); })(); }, []);
+
+  const toggleProd = (id) => setSeleccion((s) => s.find((x) => x.id === id) ? s.filter((x) => x.id !== id) : [...s, { id, qty: 1 }]);
+  const setQtyProd = (id, q) => setSeleccion((s) => s.map((x) => x.id === id ? { ...x, qty: Math.max(1, q) } : x));
+
+  const itemsDetalle = seleccion.map((s) => {
+    const p = products.find((x) => x.id === s.id);
+    return p ? { id: p.id, name: p.name, qty: s.qty, price: p.price } : null;
+  }).filter(Boolean);
+  const precioNormal = itemsDetalle.reduce((a, i) => a + i.price * i.qty, 0);
+  const ahorro = precioNormal - Number(precio || 0);
+
+  const guardar = async () => {
+    if (!nombre || !itemsDetalle.length) return;
+    const nueva = { nombre, tipo, precio: Number(precio), items: itemsDetalle };
+    try {
+      const saved = await crearPromo(nueva);
+      setPromos((p) => [saved, ...p]);
+    } catch (e) {
+      alert("No se pudo guardar. ¿Corriste la migración de promociones en Supabase?");
+      return;
+    }
+    setCreando(false); setNombre(""); setSeleccion([]); setPrecio(0);
+  };
+
+  const eliminar = async (id) => { setPromos((p) => p.filter((x) => x.id !== id)); borrarPromo(id); };
+
+  const tipoInfo = {
+    combo: { label: "Combo", color: C.primary, desc: "Varios productos a precio fijo" },
+    descuento: { label: "Descuento", color: C.green, desc: "Precio rebajado" },
+    oferta: { label: "Oferta del día", color: C.blue, desc: "Producto destacado" },
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Promociones</h1>
+          <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>Armá combos y ofertas para vender más</p>
+        </div>
+        {!creando && <button onClick={() => setCreando(true)} style={cobrarBtn}><Plus size={16} /> Nueva promoción</button>}
+      </div>
+
+      {creando && (
+        <Panel style={{ padding: 20, marginBottom: 16 }}>
+          <SectionHead icon={Target} title="Nueva promoción" />
+          <Field label="Nombre de la promo">
+            <input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Combo familiar" style={inp} />
+          </Field>
+          <div style={{ marginTop: 12, marginBottom: 4, fontSize: 12, color: C.sub }}>Tipo</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+            {Object.entries(tipoInfo).map(([k, t]) => (
+              <button key={k} onClick={() => setTipo(k)}
+                style={{ padding: "8px 14px", borderRadius: 10, border: `1px solid ${tipo === k ? t.color : C.border}`, background: tipo === k ? `${t.color}1c` : C.card, color: tipo === k ? t.color : C.sub, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>{t.label}</button>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>Elegí los productos incluidos</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8, marginBottom: 14, maxHeight: 240, overflowY: "auto" }}>
+            {products.map((p) => {
+              const sel = seleccion.find((x) => x.id === p.id);
+              return (
+                <div key={p.id} onClick={() => toggleProd(p.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: 8, borderRadius: 10, cursor: "pointer", border: `1px solid ${sel ? C.primary : C.border}`, background: sel ? C.primarySoft : C.card }}>
+                  <Photo id={p.id} size={30} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                    <div style={{ fontSize: 11, color: C.sub }}>{money(p.price)}</div>
+                  </div>
+                  {sel && (
+                    <input type="number" value={sel.qty} onClick={(e) => e.stopPropagation()} onChange={(e) => setQtyProd(p.id, Number(e.target.value))}
+                      style={{ width: 40, background: C.bg, border: `1px solid ${C.border2}`, borderRadius: 7, padding: "4px", fontSize: 12, color: C.text, textAlign: "center", outline: "none" }} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div style={{ background: C.card, borderRadius: 10, padding: "10px 14px" }}>
+              <div style={{ fontSize: 11, color: C.sub }}>Precio normal (suma)</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(precioNormal)}</div>
+            </div>
+            <Field label="Precio de la promo">
+              <input type="number" value={precio} onChange={(e) => setPrecio(e.target.value)} style={inp} />
+            </Field>
+          </div>
+          {ahorro > 0 && <div style={{ fontSize: 12.5, color: C.green, marginTop: 8, fontWeight: 600 }}>El cliente ahorra {money(ahorro)} ({Math.round(ahorro / precioNormal * 100)}% off)</div>}
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+            <button onClick={() => setCreando(false)} style={{ background: C.card, border: `1px solid ${C.border2}`, borderRadius: 11, padding: "12px 18px", color: C.text, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>Cancelar</button>
+            <button onClick={guardar} disabled={!nombre || !itemsDetalle.length} style={{ ...cobrarBtn, opacity: (nombre && itemsDetalle.length) ? 1 : 0.4 }}><Save size={16} /> Guardar promoción</button>
+          </div>
+        </Panel>
+      )}
+
+      {cargando ? (
+        <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "30px 0" }}>Cargando…</div>
+      ) : !promos.length && !creando ? (
+        <Panel style={{ padding: 50, textAlign: "center" }}>
+          <Target size={30} color={C.border2} style={{ margin: "0 auto 10px" }} />
+          <div style={{ fontSize: 14, color: C.text, fontWeight: 600, marginBottom: 4 }}>Todavía no tenés promociones</div>
+          <div style={{ fontSize: 13, color: C.sub }}>Armá un combo (ej: pollo + papas + coca) a precio especial.</div>
+        </Panel>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>
+          {promos.map((promo) => {
+            const normal = (promo.items || []).reduce((a, i) => a + Number(i.price) * Number(i.qty), 0);
+            const ah = normal - promo.precio;
+            const ti = tipoInfo[promo.tipo] || tipoInfo.combo;
+            return (
+              <Panel key={promo.id} style={{ padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: ti.color, background: `${ti.color}1c`, padding: "3px 9px", borderRadius: 999 }}>{ti.label}</span>
+                  <button onClick={() => eliminar(promo.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 2 }}><Trash2 size={15} color={C.faint} /></button>
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 10 }}>{promo.nombre}</div>
+                <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+                  {(promo.items || []).map((i) => (
+                    <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 5, background: C.card, borderRadius: 8, padding: "4px 8px" }}>
+                      <Photo id={i.id} size={20} radius={6} />
+                      <span style={{ fontSize: 11.5, color: C.text }}>{i.qty}× {i.name}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                  <span style={{ fontSize: 22, fontWeight: 800, color: C.primary, fontVariantNumeric: "tabular-nums" }}>{money(promo.precio)}</span>
+                  {ah > 0 && <span style={{ fontSize: 13, color: C.faint, textDecoration: "line-through" }}>{money(normal)}</span>}
+                  {ah > 0 && <span style={{ fontSize: 12, color: C.green, fontWeight: 700 }}>ahorra {money(ah)}</span>}
+                </div>
+              </Panel>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   IA ASISTENTE (análisis automático de datos reales)
+   ============================================================ */
+function IAScreen() {
+  const { ventas = [], products } = useStore();
+
+  // ---- Cálculos ----
+  const acum = {};
+  let totalGeneral = 0;
+  const porDiaSemana = [0, 0, 0, 0, 0, 0, 0]; // dom..sab
+  const cuentaDiaSemana = [0, 0, 0, 0, 0, 0, 0];
+  ventas.forEach((v) => {
+    totalGeneral += Number(v.total || 0);
+    const d = new Date(v.creado_en);
+    porDiaSemana[d.getDay()] += Number(v.total || 0);
+    cuentaDiaSemana[d.getDay()]++;
+    if (Array.isArray(v.items)) v.items.forEach((i) => {
+      if (!acum[i.id]) acum[i.id] = { id: i.id, name: i.name, qty: 0, v: 0 };
+      acum[i.id].qty += Number(i.qty || 0);
+      acum[i.id].v += Number(i.qty || 0) * Number(i.price || 0);
+    });
+  });
+  const vendidos = Object.values(acum).sort((a, b) => b.v - a.v);
+  const ticketProm = ventas.length ? totalGeneral / ventas.length : 0;
+  const diasNombre = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+  let mejorDia = -1, mejorMonto = -1;
+  porDiaSemana.forEach((m, i) => { if (m > mejorMonto) { mejorMonto = m; mejorDia = i; } });
+
+  const criticos = products.filter((p) => p.byWeight ? p.stock <= 5 : p.stock <= 6);
+  const sinVentas = products.filter((p) => !acum[p.id]);
+  const margenProm = products.length
+    ? Math.round(products.filter((p) => p.price > 0).reduce((a, p) => a + ((p.price - p.cost) / p.price) * 100, 0) / (products.filter((p) => p.price > 0).length || 1))
+    : 0;
+
+  // ---- Armar insights ----
+  const insights = [];
+  if (ventas.length === 0) {
+    insights.push({ icon: Lightbulb, color: C.primary, titulo: "Todavía no hay datos", texto: "Registrá algunas ventas y la IA va a empezar a analizar tu negocio: qué días vendés más, qué productos rotan, qué conviene reponer y más." });
+  } else {
+    insights.push({ icon: Wallet, color: C.green, titulo: "Facturación total", texto: `Llevás ${money(totalGeneral)} en ${ventas.length} ${ventas.length === 1 ? "venta" : "ventas"} registradas. Tu ticket promedio es de ${money(ticketProm)}.` });
+    if (vendidos.length) insights.push({ icon: TrendingUp, color: C.primary, titulo: "Tu estrella", texto: `${vendidos[0].name} es lo que más facturás (${money(vendidos[0].v)}). Asegurate de no quedarte sin stock: es tu producto clave.` });
+    if (mejorDia >= 0 && mejorMonto > 0) insights.push({ icon: Sparkles, color: C.purple, titulo: "Tu mejor día", texto: `Los ${diasNombre[mejorDia]} son tus días fuertes (${money(mejorMonto)} acumulados). Conviene tener stock completo y quizás reforzar personal ese día.` });
+    if (vendidos.length > 2) { const peor = vendidos[vendidos.length - 1]; insights.push({ icon: TrendingDown, color: C.blue, titulo: "El que menos rota", texto: `${peor.name} es de lo que menos vendés. Pensá una promo o combo para darle salida.` }); }
+    if (sinVentas.length) insights.push({ icon: Package, color: C.blue, titulo: "Sin movimiento", texto: `${sinVentas.length} ${sinVentas.length === 1 ? "producto no registró" : "productos no registraron"} ventas: ${sinVentas.slice(0, 4).map((p) => p.name).join(", ")}. Revisá precio o ubicación.` });
+    if (criticos.length) insights.push({ icon: AlertTriangle, color: C.red, titulo: "Reponé pronto", texto: `${criticos.length} ${criticos.length === 1 ? "producto está" : "productos están"} en stock crítico: ${criticos.slice(0, 4).map((p) => p.name).join(", ")}.` });
+    if (margenProm > 0) insights.push({ icon: Percent, color: C.green, titulo: "Tu margen promedio", texto: `El margen promedio de tus productos es ${margenProm}%. ${margenProm < 30 ? "Está algo bajo: revisá costos o precios." : "Buen número para el rubro."}` });
+    // sugerencia de combo
+    if (vendidos.length >= 2) insights.push({ icon: Target, color: C.primary, titulo: "Idea de combo", texto: `Probá un combo con ${vendidos[0].name} + ${vendidos[1].name}: son tus más vendidos y juntos pueden subir tu ticket promedio.` });
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 18 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>IA Asistente</h1>
+        <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>Análisis automático de tu negocio en base a tus datos reales</p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 16 }}>
+        {insights.map((ins, i) => (
+          <motion.div key={i} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
+            <Panel style={{ padding: 20, height: "100%" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                <div style={{ width: 38, height: 38, borderRadius: 11, background: `${ins.color}22`, display: "grid", placeItems: "center", flexShrink: 0 }}>
+                  <ins.icon size={19} color={ins.color} />
+                </div>
+                <div style={{ fontSize: 14.5, fontWeight: 700, color: C.text }}>{ins.titulo}</div>
+              </div>
+              <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.5 }}>{ins.texto}</div>
+            </Panel>
+          </motion.div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 20, background: C.primarySoft, border: `1px solid rgba(251,191,36,.25)`, borderRadius: 14, padding: "14px 18px", display: "flex", gap: 12, alignItems: "center" }}>
+        <Bot size={20} color={C.primary} />
+        <div style={{ fontSize: 13, color: C.text }}>Estos análisis se actualizan solos con cada venta que registrás. Mientras más vendas, más precisos se vuelven.</div>
+      </div>
     </div>
   );
 }
@@ -1775,6 +2010,8 @@ export default function App() {
       case "pedidos": return <PedidosScreen />;
       case "caja": return <CajaScreen />;
       case "reportes": return <ReportesScreen />;
+      case "promos": return <PromosScreen />;
+      case "ia": return <IAScreen />;
       default: {
         const n = NAV.find((x) => x.id === active);
         return <Placeholder title={n.label} icon={n.icon} />;
