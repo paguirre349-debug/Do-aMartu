@@ -15,6 +15,7 @@ import {
   Menu, Home,
   Maximize2, ChevronRight, Command, ClipboardList, Upload, Percent,
   Calculator, Pencil, Save, ImagePlus, Clock, Truck as TruckIcon, PackageCheck,
+  Banknote, Building2, Smartphone, CreditCard,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell,
@@ -135,12 +136,12 @@ function useCountUp(target, dur = 800) {
 const Panel = ({ children, style, ...p }) => (
   <div {...p} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 18, ...style }}>{children}</div>
 );
-const SectionHead = ({ icon: Icon, title, action }) => (
+const SectionHead = ({ icon: Icon, title, action, onAction }) => (
   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
     <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 15, fontWeight: 700, color: C.text }}>
       {Icon && <Icon size={17} color={C.primary} />} {title}
     </div>
-    {action && <button style={{ background: "none", border: "none", color: C.sub, fontSize: 12.5, cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}>{action} <ChevronRight size={13} /></button>}
+    {action && <button onClick={onAction} style={{ background: "none", border: "none", color: onAction ? C.primary : C.sub, fontSize: 12.5, cursor: onAction ? "pointer" : "default", display: "flex", alignItems: "center", gap: 3 }}>{action} <ChevronRight size={13} /></button>}
   </div>
 );
 
@@ -324,7 +325,7 @@ function FrequentGrid({ onAdd }) {
 /* ============================================================
    DASHBOARD
    ============================================================ */
-function Dashboard({ cart, setCart, onAdd }) {
+function Dashboard({ cart, setCart, onAdd, setActive }) {
   const { products } = useStore();
   const byId = (id) => products.find((p) => p.id === id);
   const [ventas, setVentas] = useState([]);
@@ -460,7 +461,7 @@ function Dashboard({ cart, setCart, onAdd }) {
 
       {/* stock quick strip (los más vendidos) */}
       <Panel style={{ padding: 20 }}>
-        <SectionHead icon={Package} title="Stock rápido" />
+        <SectionHead icon={Package} title="Stock rápido" action="Ver todos" onAction={() => setActive("stock")} />
         {!stockRapido.length ? (
           <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Cargá productos para verlos acá</div>
         ) : (
@@ -497,7 +498,7 @@ function Dashboard({ cart, setCart, onAdd }) {
       {/* bottom trio */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }} className="trio-grid">
         <Panel style={{ padding: 20 }}>
-          <SectionHead title="Ventas recientes" />
+          <SectionHead title="Ventas recientes" action="Ver todas" onAction={() => setActive("ventas")} />
           {!recientes.length ? (
             <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Todavía no hay ventas</div>
           ) : recientes.map((r) => (
@@ -520,7 +521,7 @@ function Dashboard({ cart, setCart, onAdd }) {
         </Panel>
 
         <Panel style={{ padding: 20 }}>
-          <SectionHead title="Top productos" />
+          <SectionHead title="Top productos" action="Ver todos" onAction={() => setActive("productos")} />
           {!topProductos.length ? (
             <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Sin ventas todavía</div>
           ) : topProductos.map((t, i) => {
@@ -1041,6 +1042,184 @@ function PedidosScreen() {
 }
 
 /* ============================================================
+   PANTALLA DE VENTAS (POS completo)
+   ============================================================ */
+function VentasScreen({ cart, setCart, onAdd }) {
+  const { products, setProducts } = useStore();
+  const [q, setQ] = useState("");
+  const [pay, setPay] = useState("efectivo");
+  const [flash, setFlash] = useState(false);
+  const [lastTotal, setLastTotal] = useState(0);
+  const searchRef = useRef();
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return products;
+    return products.filter((p) => p.name.toLowerCase().includes(s));
+  }, [q, products]);
+
+  const setQty = (id, d) =>
+    setCart((prev) => prev.map((i) => i.id === id ? { ...i, qty: Math.max(0, +(i.qty + d).toFixed(3)) } : i).filter((i) => i.qty > 0));
+  const del = (id) => setCart((prev) => prev.filter((i) => i.id !== id));
+  const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
+
+  const pagos = [
+    { id: "efectivo", label: "Efectivo", icon: Banknote },
+    { id: "transferencia", label: "Transferencia", icon: Building2 },
+    { id: "mp", label: "Mercado Pago", icon: Smartphone },
+    { id: "tarjeta", label: "Tarjeta", icon: CreditCard },
+  ];
+
+  const charge = async () => {
+    if (!cart.length) return;
+    setLastTotal(subtotal);
+    setFlash(true);
+    const items = cart.map((i) => ({ id: i.id, name: i.name, qty: i.qty, price: i.price }));
+    // guardar venta
+    registrarVenta({ total: subtotal, metodo: pay, items }).catch(() => {});
+    // descontar stock (local + supabase)
+    const updated = products.map((p) => {
+      const item = cart.find((i) => i.id === p.id);
+      if (!item) return p;
+      const nuevoStock = Math.max(0, +(p.stock - item.qty).toFixed(3));
+      const np = { ...p, stock: nuevoStock, label: `${nuevoStock} ${p.unit === "maple" ? "maples" : p.unit}` };
+      upsertProducto(np).catch(() => {});
+      return np;
+    });
+    setProducts(updated);
+    setTimeout(() => { setFlash(false); setCart([]); }, 850);
+  };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "F2") { e.preventDefault(); charge(); }
+      if (e.key === "F3") { e.preventDefault(); searchRef.current?.focus(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }); // eslint-disable-line
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Nueva venta</h1>
+        <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>Tocá los productos para agregarlos al ticket</p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 16 }} className="ventas-grid">
+        {/* IZQUIERDA: buscador + grilla */}
+        <div>
+          <div style={{ position: "relative", marginBottom: 16 }}>
+            <Search size={20} color={C.faint} style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)" }} />
+            <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar producto o escanear..."
+              style={{ width: "100%", background: C.panel, border: `1px solid ${C.border2}`, borderRadius: 14, padding: "16px 16px 16px 48px", fontSize: 16, color: C.text, outline: "none" }} />
+          </div>
+          {!products.length ? (
+            <Panel style={{ padding: 40, textAlign: "center" }}>
+              <Beef size={30} color={C.border2} style={{ margin: "0 auto 10px" }} />
+              <div style={{ fontSize: 14, color: C.text, fontWeight: 600, marginBottom: 4 }}>No hay productos cargados</div>
+              <div style={{ fontSize: 13, color: C.sub }}>Cargá productos en la pestaña Productos para poder vender.</div>
+            </Panel>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12 }}>
+              {filtered.map((p) => (
+                <motion.button key={p.id} whileHover={{ y: -3 }} whileTap={{ scale: 0.96 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 26 }} onClick={() => onAdd(p)}
+                  style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 16, padding: 14, cursor: "pointer", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                  <Photo id={p.id} size={64} radius={14} />
+                  <div style={{ width: "100%" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.2 }}>{p.name}</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: C.primary, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
+                      {money(p.price)}{p.byWeight ? <span style={{ fontSize: 10, color: C.sub }}>/kg</span> : ""}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.faint, marginTop: 2 }}>Stock {p.stock} {p.unit}</div>
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* DERECHA: ticket */}
+        <Panel style={{ padding: 0, position: "relative", overflow: "hidden", alignSelf: "start", position: "sticky", top: 0 }} className="ticket-panel">
+          <AnimatePresence>
+            {flash && (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                style={{ position: "absolute", inset: 0, zIndex: 10, background: C.greenSoft, backdropFilter: "blur(4px)", display: "grid", placeItems: "center", borderRadius: 18 }}>
+                <motion.div initial={{ scale: 0.6 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 300, damping: 18 }} style={{ textAlign: "center" }}>
+                  <div style={{ width: 64, height: 64, borderRadius: 999, background: C.green, display: "grid", placeItems: "center", margin: "0 auto 12px" }}>
+                    <Check size={36} color={C.bg} strokeWidth={3} />
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>Venta cobrada</div>
+                  <div style={{ color: C.sub, fontSize: 13 }}>{money(lastTotal)}</div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: C.text, display: "flex", alignItems: "center", gap: 8 }}>
+              <ShoppingCart size={17} color={C.primary} /> Ticket
+            </div>
+            <span style={{ fontSize: 12, color: C.sub }}>{cart.length} ítems</span>
+          </div>
+
+          <div style={{ maxHeight: 340, overflowY: "auto", padding: cart.length ? "8px 12px" : 0 }}>
+            {!cart.length ? (
+              <div style={{ padding: "40px 20px", textAlign: "center", color: C.faint }}>
+                <ShoppingCart size={30} color={C.border2} style={{ margin: "0 auto 8px" }} />
+                <div style={{ fontSize: 13 }}>Tocá un producto para empezar</div>
+              </div>
+            ) : (
+              <AnimatePresence>
+                {cart.map((i) => (
+                  <motion.div key={i.id} layout initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 16 }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: 8, borderRadius: 12, marginBottom: 4, background: C.card }}>
+                    <Photo id={i.id} size={38} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.name}</div>
+                      <div style={{ fontSize: 11, color: C.sub }}>{i.byWeight ? `${i.qty} kg` : `${i.qty} ${i.unit}`} · {money(i.price)}</div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                      <button onClick={() => setQty(i.id, i.byWeight ? -0.25 : -1)} style={qtyBtn}><Minus size={12} color={C.sub} /></button>
+                      <button onClick={() => setQty(i.id, i.byWeight ? 0.25 : 1)} style={qtyBtn}><Plus size={12} color={C.sub} /></button>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text, width: 64, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(i.price * i.qty)}</div>
+                    <button onClick={() => del(i.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 2 }}><Trash2 size={14} color={C.faint} /></button>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            )}
+          </div>
+
+          <div style={{ padding: "14px 18px", borderTop: `1px solid ${C.border}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Total</span>
+              <span style={{ fontSize: 26, fontWeight: 800, color: C.primary, fontVariantNumeric: "tabular-nums" }}>{money(subtotal)}</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+              {pagos.map((m) => {
+                const on = pay === m.id;
+                return (
+                  <button key={m.id} onClick={() => setPay(m.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 10px", borderRadius: 11, border: `1px solid ${on ? C.primary : C.border}`, background: on ? C.primarySoft : C.card, color: on ? C.primary : C.sub, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                    <m.icon size={14} /> {m.label}
+                  </button>
+                );
+              })}
+            </div>
+            <motion.button whileTap={{ scale: 0.98 }} onClick={charge} disabled={!cart.length}
+              style={{ ...cobrarBtn, width: "100%", justifyContent: "center", fontSize: 16, opacity: cart.length ? 1 : 0.4 }}>
+              <Zap size={19} /> COBRAR
+            </motion.button>
+          </div>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    PLACEHOLDER
    ============================================================ */
 function Placeholder({ title, icon: Icon }) {
@@ -1103,6 +1282,11 @@ function Sidebar({ active, setActive }) {
    TOPBAR
    ============================================================ */
 function Topbar({ setActive, onOpenMenu }) {
+  const now = new Date();
+  const h = now.getHours();
+  const saludo = h >= 6 && h < 13 ? "Buenos días" : h >= 13 && h < 20 ? "Buenas tardes" : "Buenas noches";
+  const fecha = now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
+  const fechaCap = fecha.charAt(0).toUpperCase() + fecha.slice(1);
   return (
     <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", gap: 20 }} className="topbar">
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -1111,9 +1295,9 @@ function Topbar({ setActive, onOpenMenu }) {
         </button>
         <div>
           <div style={{ fontSize: 20, fontWeight: 800, color: C.text, display: "flex", alignItems: "center", gap: 8, letterSpacing: "-.01em" }} className="greeting">
-            Buenos días, Marta <span style={{ fontSize: 18 }}>👋</span>
+            {saludo} <span style={{ fontSize: 18 }}>👋</span>
           </div>
-          <div style={{ fontSize: 13, color: C.sub, marginTop: 2 }} className="greeting-date">Viernes, 29 de Julio</div>
+          <div style={{ fontSize: 13, color: C.sub, marginTop: 2 }} className="greeting-date">{fechaCap}</div>
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -1227,7 +1411,8 @@ export default function App() {
 
   const view = () => {
     switch (active) {
-      case "dashboard": return <Dashboard cart={cart} setCart={setCart} onAdd={onAdd} />;
+      case "dashboard": return <Dashboard cart={cart} setCart={setCart} onAdd={onAdd} setActive={setActive} />;
+      case "ventas": return <VentasScreen cart={cart} setCart={setCart} onAdd={onAdd} />;
       case "productos": return <ProductsScreen />;
       case "compras": return <ComprasScreen />;
       case "pedidos": return <PedidosScreen />;
@@ -1263,6 +1448,8 @@ export default function App() {
           .sidebar { display: none !important; }
           .topsearch { display: none !important; }
           .stock-strip, .freq-grid { grid-template-columns: repeat(2,1fr) !important; }
+          .ventas-grid { grid-template-columns: 1fr !important; }
+          .ticket-panel { position: relative !important; }
           .menu-btn { display: grid !important; }
           .mobilenav { display: flex !important; }
           .topbar { padding: 14px 16px !important; }
