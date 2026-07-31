@@ -393,9 +393,9 @@ function Dashboard({ cart, setCart, onAdd, setActive }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }} className="kpi-grid">
-        <KPI icon={Wallet} tint={C.primary} label="Ventas del día" n={facturacionHoy} spark note={ticketsHoy ? `${ticketsHoy} ${ticketsHoy === 1 ? "venta" : "ventas"} hoy` : "Sin ventas aún"} noDelta />
-        <KPI icon={ShoppingCart} tint={C.purple} label="Tickets realizados" raw={String(ticketsHoy)} note="hoy" noDelta />
-        <KPI icon={Package} tint={C.blue} label="Productos vendidos" raw={String(Math.round(productosVendidosHoy))} note="hoy" noDelta />
+        <KPI icon={Wallet} tint={C.primary} label="Ventas del día" n={facturacionHoy} spark note={ticketsHoy ? `${ticketsHoy} ${ticketsHoy === 1 ? "venta" : "ventas"} hoy` : "Sin ventas aún"} noDelta onClick={() => setActive("caja")} />
+        <KPI icon={ShoppingCart} tint={C.purple} label="Tickets realizados" raw={String(ticketsHoy)} note="hoy" noDelta onClick={() => setActive("caja")} />
+        <KPI icon={Package} tint={C.blue} label="Productos vendidos" raw={String(Math.round(productosVendidosHoy))} note="hoy" noDelta onClick={() => setActive("reportes")} />
         <KPI icon={AlertTriangle} tint={C.red} label="Stock crítico" raw={String(criticos)} critical onClick={() => setActive("stock")} />
       </div>
 
@@ -488,22 +488,11 @@ function Dashboard({ cart, setCart, onAdd, setActive }) {
       {/* bottom trio */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }} className="trio-grid">
         <Panel style={{ padding: 20 }}>
-          <SectionHead title="Ventas recientes" action="Ver todas" onAction={() => setActive("ventas")} />
+          <SectionHead title="Ventas recientes" action="Ver todas" onAction={() => setActive("caja")} />
           {!recientes.length ? (
             <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Todavía no hay ventas</div>
           ) : recientes.map((r) => (
-            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>#{String(r.id).padStart(6, "0")}</div>
-                <div style={{ fontSize: 11.5, color: C.faint }}>{haceCuanto(r.creado_en)}</div>
-              </div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(r.total)}</div>
-              <span style={{ fontSize: 11.5, fontWeight: 600, color: metodoColor[r.metodo_pago] || C.sub }}>{metodoLabel[r.metodo_pago] || r.metodo_pago || "—"}</span>
-              <button onClick={() => { if (confirm(`¿Borrar la venta #${String(r.id).padStart(6, "0")}? Se va a devolver el stock vendido.`)) borrarVenta(r); }}
-                style={{ background: "none", border: "none", cursor: "pointer", padding: 3 }} title="Borrar venta">
-                <Trash2 size={14} color={C.faint} />
-              </button>
-            </div>
+            <VentaRow key={r.id} v={r} onDelete={borrarVenta} showFecha />
           ))}
         </Panel>
 
@@ -547,13 +536,15 @@ function FullPhoto({ id }) {
 
 function KPI({ icon: Icon, tint, label, n, raw, delta, note, spark, critical, noDelta, onClick }) {
   const v = useCountUp(n || 0);
+  const clickable = onClick && !critical;
   return (
-    <Panel style={{ padding: 20, position: "relative", overflow: "hidden" }}>
+    <Panel onClick={clickable ? onClick : undefined} style={{ padding: 20, position: "relative", overflow: "hidden", cursor: clickable ? "pointer" : "default" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
         <div style={{ width: 30, height: 30, borderRadius: 9, background: `${tint}22`, display: "grid", placeItems: "center" }}>
           <Icon size={16} color={tint} />
         </div>
         <span style={{ fontSize: 12.5, color: C.sub }}>{label}</span>
+        {clickable && <ChevronRight size={15} color={C.faint} style={{ marginLeft: "auto" }} />}
       </div>
       <div className="kpi-value" style={{ fontSize: 32, fontWeight: 800, color: critical ? C.red : C.text, letterSpacing: "-.02em", lineHeight: 1, whiteSpace: "nowrap" }}>
         {raw ? raw : money(v)}
@@ -1372,6 +1363,57 @@ function StockScreen() {
   );
 }
 
+/* ---- Fila de venta expandible: toca para ver qué se vendió ---- */
+function VentaRow({ v, onDelete, showFecha }) {
+  const [open, setOpen] = useState(false);
+  const metodoLabel = { efectivo: "Efectivo", transferencia: "Transferencia", mp: "Mercado Pago", tarjeta: "Tarjeta" };
+  const metodoColor = { efectivo: C.green, transferencia: C.blue, mp: C.primary, tarjeta: C.purple };
+  const items = Array.isArray(v.items) ? v.items : [];
+  const fecha = new Date(v.creado_en);
+  return (
+    <div style={{ borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", cursor: "pointer" }} onClick={() => setOpen((o) => !o)}>
+        <motion.div animate={{ rotate: open ? 90 : 0 }} style={{ display: "flex" }}><ChevronRight size={15} color={C.faint} /></motion.div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>#{String(v.id).padStart(6, "0")}</div>
+          <div style={{ fontSize: 11.5, color: C.faint }}>
+            {showFecha ? fecha.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }) + " " : ""}
+            {fecha.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })} hs · {items.length} {items.length === 1 ? "ítem" : "ítems"}
+          </div>
+        </div>
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: metodoColor[v.metodo_pago] || C.sub }}>{metodoLabel[v.metodo_pago] || v.metodo_pago}</span>
+        <div style={{ fontSize: 14, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", width: 78, textAlign: "right" }}>{money(v.total)}</div>
+        {onDelete && (
+          <button onClick={(e) => { e.stopPropagation(); if (confirm(`¿Borrar la venta #${String(v.id).padStart(6, "0")}? Se va a devolver el stock vendido.`)) onDelete(v); }}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }} title="Borrar venta">
+            <Trash2 size={15} color={C.faint} />
+          </button>
+        )}
+      </div>
+      <AnimatePresence>
+        {open && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} style={{ overflow: "hidden" }}>
+            <div style={{ background: C.card, borderRadius: 10, padding: "8px 12px", margin: "0 0 12px 24px" }}>
+              {!items.length ? (
+                <div style={{ fontSize: 12, color: C.faint, padding: "6px 0" }}>Sin detalle de productos</div>
+              ) : items.map((i, idx) => (
+                <div key={idx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: idx < items.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                  <Photo id={i.id} size={30} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text }}>{i.name}</div>
+                    <div style={{ fontSize: 11, color: C.faint }}>{i.qty} × {money(i.price)}</div>
+                  </div>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(Number(i.qty) * Number(i.price))}</div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /* ============================================================
    CAJA
    ============================================================ */
@@ -1424,21 +1466,11 @@ function CajaScreen() {
 
         <Panel style={{ padding: 20 }}>
           <SectionHead icon={Clock} title="Ventas de hoy" />
+          <div style={{ fontSize: 11.5, color: C.faint, marginTop: -8, marginBottom: 8 }}>Tocá una venta para ver qué se vendió</div>
           {!hoy.length ? (
             <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "24px 0" }}>Todavía no hay ventas hoy</div>
           ) : hoy.map((v) => (
-            <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>#{String(v.id).padStart(6, "0")}</div>
-                <div style={{ fontSize: 11.5, color: C.faint }}>{new Date(v.creado_en).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })} hs</div>
-              </div>
-              <span style={{ fontSize: 11.5, fontWeight: 600, color: metodoColor[v.metodo_pago] || C.sub }}>{metodoLabel[v.metodo_pago] || v.metodo_pago}</span>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", width: 80, textAlign: "right" }}>{money(v.total)}</div>
-              <button onClick={() => { if (confirm(`¿Borrar la venta #${String(v.id).padStart(6, "0")}? Se va a devolver el stock vendido.`)) borrarVenta(v); }}
-                style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }} title="Borrar venta">
-                <Trash2 size={15} color={C.faint} />
-              </button>
-            </div>
+            <VentaRow key={v.id} v={v} onDelete={borrarVenta} />
           ))}
         </Panel>
       </div>
