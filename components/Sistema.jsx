@@ -5,7 +5,7 @@ import { SEED_PRODUCTS } from "@/lib/seed";
 import { supabaseReady } from "@/lib/supabase";
 import {
   fetchProductos, upsertProducto, subirFoto,
-  registrarCompra, registrarVenta, fetchVentas, fetchCompras,
+  registrarCompra, registrarVenta, fetchVentas, fetchCompras, deleteCompra,
   fetchPedidos, crearPedido, actualizarPedido,
 } from "@/lib/db";
 import {
@@ -865,6 +865,19 @@ function ComprasScreen() {
   const comprasHoy = log.filter((c) => c.creado_en && new Date(c.creado_en).toDateString() === hoyStr);
   const gastadoHoy = comprasHoy.reduce((s, c) => s + Number(c.total || 0), 0);
 
+  const borrar = async (compra) => {
+    // descontar del stock lo que esta compra había sumado
+    const prod = products.find((x) => x.id === compra.producto_id);
+    if (prod) {
+      const nuevoStock = Math.max(0, +(prod.stock - Number(compra.cantidad || 0)).toFixed(3));
+      const np = { ...prod, stock: nuevoStock, label: `${nuevoStock} ${prod.unit === "maple" ? "maples" : prod.unit}` };
+      setProducts((prev) => prev.map((x) => x.id === prod.id ? np : x));
+      upsertProducto(np).catch(() => {});
+    }
+    setLog((l) => l.filter((c) => c.id !== compra.id));
+    try { await deleteCompra(compra.id); } catch (e) {}
+  };
+
   const fechaCompra = (c) => {
     if (!c.creado_en) return "Recién";
     const d = new Date(c.creado_en);
@@ -927,6 +940,10 @@ function ComprasScreen() {
                       <div style={{ fontSize: 11, color: C.faint }}>{fechaCompra(l)}</div>
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(l.total)}</div>
+                    <button onClick={() => { if (confirm(`¿Borrar la compra de ${l.nombre}? Se van a descontar ${l.cantidad} del stock.`)) borrar(l); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }} title="Borrar compra">
+                      <Trash2 size={15} color={C.faint} />
+                    </button>
                   </div>
                 ))}
               </div>
