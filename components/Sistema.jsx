@@ -5,7 +5,7 @@ import { SEED_PRODUCTS } from "@/lib/seed";
 import { supabaseReady } from "@/lib/supabase";
 import {
   fetchProductos, upsertProducto, subirFoto,
-  registrarCompra, registrarVenta, fetchVentas, fetchCompras, deleteCompra,
+  registrarCompra, registrarVenta, fetchVentas, fetchCompras, deleteCompra, deleteVenta,
   fetchPedidos, crearPedido, actualizarPedido,
 } from "@/lib/db";
 import {
@@ -326,7 +326,7 @@ function FrequentGrid({ onAdd }) {
    DASHBOARD
    ============================================================ */
 function Dashboard({ cart, setCart, onAdd, setActive }) {
-  const { products, ventas = [] } = useStore();
+  const { products, ventas = [], borrarVenta } = useStore();
   const byId = (id) => products.find((p) => p.id === id);
 
   // ---- CÁLCULOS REALES ----
@@ -491,13 +491,17 @@ function Dashboard({ cart, setCart, onAdd, setActive }) {
           {!recientes.length ? (
             <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Todavía no hay ventas</div>
           ) : recientes.map((r) => (
-            <div key={r.id} style={{ display: "flex", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>#{String(r.id).padStart(6, "0")}</div>
                 <div style={{ fontSize: 11.5, color: C.faint }}>{haceCuanto(r.creado_en)}</div>
               </div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginRight: 14, fontVariantNumeric: "tabular-nums" }}>{money(r.total)}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(r.total)}</div>
               <span style={{ fontSize: 11.5, fontWeight: 600, color: metodoColor[r.metodo_pago] || C.sub }}>{metodoLabel[r.metodo_pago] || r.metodo_pago || "—"}</span>
+              <button onClick={() => { if (confirm(`¿Borrar la venta #${String(r.id).padStart(6, "0")}? Se va a devolver el stock vendido.`)) borrarVenta(r); }}
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 3 }} title="Borrar venta">
+                <Trash2 size={14} color={C.faint} />
+              </button>
             </div>
           ))}
         </Panel>
@@ -1367,7 +1371,7 @@ function StockScreen() {
    CAJA
    ============================================================ */
 function CajaScreen() {
-  const { ventas = [] } = useStore();
+  const { ventas = [], borrarVenta } = useStore();
   const { hoy, facturacion, tickets, porMetodo } = statsDeVentas(ventas);
   const metodoLabel = { efectivo: "Efectivo", transferencia: "Transferencia", mp: "Mercado Pago", tarjeta: "Tarjeta" };
   const metodoColor = { efectivo: C.green, transferencia: C.blue, mp: C.primary, tarjeta: C.purple };
@@ -1418,13 +1422,17 @@ function CajaScreen() {
           {!hoy.length ? (
             <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "24px 0" }}>Todavía no hay ventas hoy</div>
           ) : hoy.map((v) => (
-            <div key={v.id} style={{ display: "flex", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
+            <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>#{String(v.id).padStart(6, "0")}</div>
                 <div style={{ fontSize: 11.5, color: C.faint }}>{new Date(v.creado_en).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })} hs</div>
               </div>
-              <span style={{ fontSize: 11.5, fontWeight: 600, color: metodoColor[v.metodo_pago] || C.sub, marginRight: 14 }}>{metodoLabel[v.metodo_pago] || v.metodo_pago}</span>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(v.total)}</div>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: metodoColor[v.metodo_pago] || C.sub }}>{metodoLabel[v.metodo_pago] || v.metodo_pago}</span>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", width: 80, textAlign: "right" }}>{money(v.total)}</div>
+              <button onClick={() => { if (confirm(`¿Borrar la venta #${String(v.id).padStart(6, "0")}? Se va a devolver el stock vendido.`)) borrarVenta(v); }}
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }} title="Borrar venta">
+                <Trash2 size={15} color={C.faint} />
+              </button>
             </div>
           ))}
         </Panel>
@@ -1721,6 +1729,22 @@ export default function App() {
     setVentas(v || []);
   }, []);
 
+  // Borrar una venta hecha por error: devuelve el stock y la elimina
+  const borrarVenta = useCallback(async (venta) => {
+    if (Array.isArray(venta.items)) {
+      setProducts((prev) => prev.map((p) => {
+        const item = venta.items.find((i) => i.id === p.id);
+        if (!item) return p;
+        const nuevoStock = +(p.stock + Number(item.qty || 0)).toFixed(3);
+        const np = { ...p, stock: nuevoStock, label: `${nuevoStock} ${p.unit === "maple" ? "maples" : p.unit}` };
+        upsertProducto(np).catch(() => {});
+        return np;
+      }));
+    }
+    setVentas((prev) => prev.filter((v) => v.id !== venta.id));
+    try { await deleteVenta(venta.id); } catch (e) {}
+  }, []);
+
   // Cargar productos y ventas desde Supabase al abrir la app
   useEffect(() => {
     (async () => {
@@ -1759,7 +1783,7 @@ export default function App() {
   };
 
   return (
-    <Store.Provider value={{ products, setProducts, ventas, refreshVentas }}>
+    <Store.Provider value={{ products, setProducts, ventas, refreshVentas, borrarVenta }}>
     <div style={{ display: "flex", height: "100vh", width: "100%", background: C.bg, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", overflow: "hidden" }}>
       <style>{`
         * { box-sizing: border-box; }
