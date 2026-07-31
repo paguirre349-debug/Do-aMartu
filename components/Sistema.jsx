@@ -326,19 +326,8 @@ function FrequentGrid({ onAdd }) {
    DASHBOARD
    ============================================================ */
 function Dashboard({ cart, setCart, onAdd, setActive }) {
-  const { products } = useStore();
+  const { products, ventas = [] } = useStore();
   const byId = (id) => products.find((p) => p.id === id);
-  const [ventas, setVentas] = useState([]);
-  const [cargando, setCargando] = useState(true);
-
-  // Traer ventas reales
-  useEffect(() => {
-    (async () => {
-      const v = await fetchVentas();
-      setVentas(v || []);
-      setCargando(false);
-    })();
-  }, []);
 
   // ---- CÁLCULOS REALES ----
   const hoyStr = new Date().toDateString();
@@ -1045,7 +1034,7 @@ function PedidosScreen() {
    PANTALLA DE VENTAS (POS completo)
    ============================================================ */
 function VentasScreen({ cart, setCart, onAdd }) {
-  const { products, setProducts } = useStore();
+  const { products, setProducts, refreshVentas } = useStore();
   const [q, setQ] = useState("");
   const [pay, setPay] = useState("efectivo");
   const [flash, setFlash] = useState(false);
@@ -1076,7 +1065,7 @@ function VentasScreen({ cart, setCart, onAdd }) {
     setFlash(true);
     const items = cart.map((i) => ({ id: i.id, name: i.name, qty: i.qty, price: i.price }));
     // guardar venta
-    registrarVenta({ total: subtotal, metodo: pay, items }).catch(() => {});
+    registrarVenta({ total: subtotal, metodo: pay, items }).then(() => refreshVentas?.()).catch(() => {});
     // descontar stock (local + supabase)
     const updated = products.map((p) => {
       const item = cart.find((i) => i.id === p.id);
@@ -1220,6 +1209,280 @@ function VentasScreen({ cart, setCart, onAdd }) {
 }
 
 /* ============================================================
+   HELPERS de estadísticas de ventas
+   ============================================================ */
+function statsDeVentas(ventas) {
+  const hoyStr = new Date().toDateString();
+  const hoy = ventas.filter((v) => v.creado_en && new Date(v.creado_en).toDateString() === hoyStr);
+  const porMetodo = {};
+  let facturacion = 0, unidades = 0;
+  hoy.forEach((v) => {
+    facturacion += Number(v.total || 0);
+    porMetodo[v.metodo_pago] = (porMetodo[v.metodo_pago] || 0) + Number(v.total || 0);
+    if (Array.isArray(v.items)) unidades += v.items.reduce((a, i) => a + Number(i.qty || 0), 0);
+  });
+  return { hoy, facturacion, unidades, tickets: hoy.length, porMetodo };
+}
+
+/* ============================================================
+   STOCK
+   ============================================================ */
+function StockScreen() {
+  const { products, setProducts } = useStore();
+  const [editStock, setEditStock] = useState({}); // { id: valor }
+
+  const guardar = async (p) => {
+    const nuevo = Number(editStock[p.id]);
+    if (isNaN(nuevo)) return;
+    const np = { ...p, stock: nuevo, label: `${nuevo} ${p.unit === "maple" ? "maples" : p.unit}` };
+    setProducts((prev) => prev.map((x) => x.id === p.id ? np : x));
+    setEditStock((e) => { const c = { ...e }; delete c[p.id]; return c; });
+    try { await upsertProducto(np); } catch (e) {}
+  };
+
+  const criticos = products.filter((p) => p.byWeight ? p.stock <= 5 : p.stock <= 6);
+
+  return (
+    <div>
+      <div style={{ marginBottom: 18 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Stock</h1>
+        <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>
+          {products.length} productos · {criticos.length} en stock crítico · tocá un número para ajustarlo
+        </p>
+      </div>
+      {!products.length ? (
+        <Panel style={{ padding: 40, textAlign: "center" }}>
+          <Package size={30} color={C.border2} style={{ margin: "0 auto 10px" }} />
+          <div style={{ fontSize: 14, color: C.sub }}>Cargá productos para gestionar el stock.</div>
+        </Panel>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 16 }}>
+          {products.map((p, idx) => {
+            const max = p.byWeight ? 40 : p.unit === "maple" ? 80 : 40;
+            const pct = Math.min(100, (p.stock / max) * 100);
+            const crit = p.byWeight ? p.stock <= 5 : p.stock <= 6;
+            const editando = editStock[p.id] !== undefined;
+            return (
+              <motion.div key={p.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.02 }}>
+                <Panel style={{ padding: 16, border: `1px solid ${crit ? C.redSoft : C.border}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                    <Photo id={p.id} size={46} radius={12} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{p.name}</div>
+                      <div style={{ fontSize: 11.5, color: C.faint }}>{p.prov || "Sin proveedor"}</div>
+                    </div>
+                    {crit && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.red, background: C.redSoft, padding: "3px 8px", borderRadius: 999 }}>Crítico</span>}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                    {editando ? (
+                      <>
+                        <input autoFocus type="number" value={editStock[p.id]} onChange={(e) => setEditStock((s) => ({ ...s, [p.id]: e.target.value }))}
+                          onKeyDown={(e) => e.key === "Enter" && guardar(p)}
+                          style={{ width: 80, background: C.bg, border: `1px solid ${C.primary}`, borderRadius: 9, padding: "8px 10px", fontSize: 18, fontWeight: 700, color: C.text, outline: "none" }} />
+                        <span style={{ fontSize: 12, color: C.sub }}>{p.unit === "maple" ? "maples" : p.unit}</span>
+                        <button onClick={() => guardar(p)} style={{ ...cobrarBtn, padding: "8px 12px", fontSize: 12 }}><Check size={14} /> Guardar</button>
+                      </>
+                    ) : (
+                      <button onClick={() => setEditStock((s) => ({ ...s, [p.id]: p.stock }))}
+                        style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "baseline", gap: 5 }}>
+                        <span style={{ fontSize: 24, fontWeight: 800, color: crit ? C.red : C.text }}>{p.stock}</span>
+                        <span style={{ fontSize: 12, color: C.sub }}>{p.unit === "maple" ? "maples" : p.unit}</span>
+                        <Pencil size={13} color={C.faint} style={{ marginLeft: 4 }} />
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ height: 6, background: C.card2, borderRadius: 999, overflow: "hidden" }}>
+                    <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.6 }}
+                      style={{ height: "100%", borderRadius: 999, background: crit ? C.red : pct < 40 ? C.primary : C.green }} />
+                  </div>
+                </Panel>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   CAJA
+   ============================================================ */
+function CajaScreen() {
+  const { ventas = [] } = useStore();
+  const { hoy, facturacion, tickets, porMetodo } = statsDeVentas(ventas);
+  const metodoLabel = { efectivo: "Efectivo", transferencia: "Transferencia", mp: "Mercado Pago", tarjeta: "Tarjeta" };
+  const metodoColor = { efectivo: C.green, transferencia: C.blue, mp: C.primary, tarjeta: C.purple };
+  const ticketProm = tickets ? facturacion / tickets : 0;
+
+  return (
+    <div>
+      <div style={{ marginBottom: 18 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Caja</h1>
+        <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>Movimientos del día · {new Date().toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })}</p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 16 }} className="kpi-grid">
+        <Panel style={{ padding: 20 }}>
+          <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 8 }}>Ingresos de hoy</div>
+          <div style={{ fontSize: 30, fontWeight: 800, color: C.green }}>{money(facturacion)}</div>
+        </Panel>
+        <Panel style={{ padding: 20 }}>
+          <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 8 }}>Ventas realizadas</div>
+          <div style={{ fontSize: 30, fontWeight: 800, color: C.text }}>{tickets}</div>
+        </Panel>
+        <Panel style={{ padding: 20 }}>
+          <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 8 }}>Ticket promedio</div>
+          <div style={{ fontSize: 30, fontWeight: 800, color: C.text }}>{money(ticketProm)}</div>
+        </Panel>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 16 }} className="mid-grid">
+        <Panel style={{ padding: 20 }}>
+          <SectionHead icon={Wallet} title="Por método de pago" />
+          {Object.keys(porMetodo).length === 0 ? (
+            <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "24px 0" }}>Sin cobros hoy</div>
+          ) : Object.entries(porMetodo).map(([m, v]) => (
+            <div key={m} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 0", borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ width: 9, height: 9, borderRadius: 3, background: metodoColor[m] || C.sub }} />
+              <span style={{ flex: 1, fontSize: 13, color: C.text }}>{metodoLabel[m] || m}</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(v)}</span>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 14, marginTop: 4 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Total en caja</span>
+            <span style={{ fontSize: 16, fontWeight: 800, color: C.green, fontVariantNumeric: "tabular-nums" }}>{money(facturacion)}</span>
+          </div>
+        </Panel>
+
+        <Panel style={{ padding: 20 }}>
+          <SectionHead icon={Clock} title="Ventas de hoy" />
+          {!hoy.length ? (
+            <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "24px 0" }}>Todavía no hay ventas hoy</div>
+          ) : hoy.map((v) => (
+            <div key={v.id} style={{ display: "flex", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>#{String(v.id).padStart(6, "0")}</div>
+                <div style={{ fontSize: 11.5, color: C.faint }}>{new Date(v.creado_en).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })} hs</div>
+              </div>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: metodoColor[v.metodo_pago] || C.sub, marginRight: 14 }}>{metodoLabel[v.metodo_pago] || v.metodo_pago}</span>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(v.total)}</div>
+            </div>
+          ))}
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   REPORTES
+   ============================================================ */
+function ReportesScreen() {
+  const { ventas = [], products } = useStore();
+  const [periodo, setPeriodo] = useState("7"); // 7 | 30 | todo
+
+  const desde = periodo === "todo" ? 0 : Date.now() - Number(periodo) * 86400000;
+  const filtradas = ventas.filter((v) => v.creado_en && new Date(v.creado_en).getTime() >= desde);
+
+  const total = filtradas.reduce((s, v) => s + Number(v.total || 0), 0);
+  const tickets = filtradas.length;
+  const prom = tickets ? total / tickets : 0;
+
+  // ventas por día
+  const porDia = {};
+  filtradas.forEach((v) => {
+    const d = new Date(v.creado_en).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" });
+    porDia[d] = (porDia[d] || 0) + Number(v.total || 0);
+  });
+  const dataDias = Object.entries(porDia).map(([d, v]) => ({ d, v })).slice(-14);
+
+  // top productos del período
+  const acum = {};
+  filtradas.forEach((v) => {
+    if (!Array.isArray(v.items)) return;
+    v.items.forEach((i) => {
+      if (!acum[i.id]) acum[i.id] = { id: i.id, name: i.name, qty: 0, v: 0 };
+      acum[i.id].qty += Number(i.qty || 0);
+      acum[i.id].v += Number(i.qty || 0) * Number(i.price || 0);
+    });
+  });
+  const top = Object.values(acum).sort((a, b) => b.v - a.v).slice(0, 8);
+  const byId = (id) => products.find((p) => p.id === id);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Reportes</h1>
+          <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>Análisis de tus ventas</p>
+        </div>
+        <div style={{ display: "flex", gap: 6, background: C.panel, border: `1px solid ${C.border}`, borderRadius: 11, padding: 4 }}>
+          {[["7", "7 días"], ["30", "30 días"], ["todo", "Todo"]].map(([id, l]) => (
+            <button key={id} onClick={() => setPeriodo(id)}
+              style={{ padding: "8px 14px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 600, background: periodo === id ? C.primarySoft : "transparent", color: periodo === id ? C.primary : C.sub }}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 16 }} className="kpi-grid">
+        <Panel style={{ padding: 20 }}>
+          <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 8 }}>Facturación</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: C.green }}>{money(total)}</div>
+        </Panel>
+        <Panel style={{ padding: 20 }}>
+          <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 8 }}>Ventas</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: C.text }}>{tickets}</div>
+        </Panel>
+        <Panel style={{ padding: 20 }}>
+          <div style={{ fontSize: 12.5, color: C.sub, marginBottom: 8 }}>Ticket promedio</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: C.text }}>{money(prom)}</div>
+        </Panel>
+      </div>
+
+      <Panel style={{ padding: 20, marginBottom: 16 }}>
+        <SectionHead title="Ventas por día" />
+        {!dataDias.length ? (
+          <div style={{ height: 200, display: "grid", placeItems: "center", color: C.faint, fontSize: 13 }}>Sin ventas en este período</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={230}>
+            <BarChart data={dataDias} margin={{ top: 10, right: 0, left: -18, bottom: 0 }}>
+              <XAxis dataKey="d" stroke={C.faint} fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis stroke={C.faint} fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`} />
+              <Tooltip cursor={{ fill: "rgba(255,255,255,.03)" }}
+                content={({ active, payload, label }) => active && payload?.length ? (
+                  <div style={{ background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10, padding: "8px 12px", textAlign: "center" }}>
+                    <div style={{ fontSize: 11, color: C.sub }}>{label}</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{money(payload[0].value)}</div>
+                  </div>) : null} />
+              <Bar dataKey="v" radius={[5, 5, 0, 0]} fill={C.primary} barSize={22} animationDuration={800} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </Panel>
+
+      <Panel style={{ padding: 20 }}>
+        <SectionHead title="Productos más vendidos" />
+        {!top.length ? (
+          <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Sin ventas en este período</div>
+        ) : top.map((t, i) => {
+          const p = byId(t.id) || { name: t.name, unit: "" };
+          return (
+            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.faint, width: 16 }}>{i + 1}</div>
+              <Photo id={t.id} size={32} />
+              <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: C.text }}>{p.name}</div>
+              <div style={{ fontSize: 12, color: C.sub, marginRight: 12, fontVariantNumeric: "tabular-nums" }}>{Math.round(t.qty * 100) / 100} {p.unit}</div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(t.v)}</div>
+            </div>
+          );
+        })}
+      </Panel>
+    </div>
+  );
+}
+
+/* ============================================================
    PLACEHOLDER
    ============================================================ */
 function Placeholder({ title, icon: Icon }) {
@@ -1238,6 +1501,8 @@ function Placeholder({ title, icon: Icon }) {
    SIDEBAR
    ============================================================ */
 function Sidebar({ active, setActive }) {
+  const { ventas = [] } = useStore();
+  const cajaHoy = statsDeVentas(ventas);
   return (
     <aside className="sidebar" style={{ width: 210, flexShrink: 0, background: C.panel, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", padding: "18px 12px" }}>
       <div style={{ padding: "4px 4px 18px" }}>
@@ -1265,13 +1530,15 @@ function Sidebar({ active, setActive }) {
         </div>
         <div style={{ background: C.card, borderRadius: 12, padding: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>Caja del día</div>
-          {[["Ingresos", 286400, C.text], ["Egresos", 72900, C.text], ["Ganancia", 213500, C.green]].map(([l, v, col]) => (
-            <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
-              <span style={{ color: C.sub }}>{l}</span>
-              <span style={{ color: col, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{money(v)}</span>
-            </div>
-          ))}
-          <button style={{ width: "100%", marginTop: 8, background: C.card2, border: `1px solid ${C.border2}`, borderRadius: 9, padding: "8px", color: C.sub, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>🔒 Cerrar caja</button>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
+            <span style={{ color: C.sub }}>Ingresos</span>
+            <span style={{ color: C.green, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{money(cajaHoy.facturacion)}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
+            <span style={{ color: C.sub }}>Ventas</span>
+            <span style={{ color: C.text, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{cajaHoy.tickets}</span>
+          </div>
+          <button onClick={() => setActive("caja")} style={{ width: "100%", marginTop: 8, background: C.card2, border: `1px solid ${C.border2}`, borderRadius: 9, padding: "8px", color: C.sub, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Ver caja</button>
         </div>
       </div>
     </aside>
@@ -1385,19 +1652,26 @@ function MobileDrawer({ open, active, setActive, onClose }) {
 export default function App() {
   const [active, setActive] = useState("dashboard");
   const [products, setProducts] = useState(SEED_PRODUCTS);
+  const [ventas, setVentas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [drawer, setDrawer] = useState(false);
   const [cart, setCart] = useState([]);
   const [weightP, setWeightP] = useState(null);
 
-  // Cargar productos desde Supabase al abrir la app
+  const refreshVentas = useCallback(async () => {
+    const v = await fetchVentas();
+    setVentas(v || []);
+  }, []);
+
+  // Cargar productos y ventas desde Supabase al abrir la app
   useEffect(() => {
     (async () => {
       const data = await fetchProductos();
       if (data?.length) setProducts(data);
+      await refreshVentas();
       setLoading(false);
     })();
-  }, []);
+  }, [refreshVentas]);
 
   const addToCart = useCallback((p, kg) => {
     setCart((prev) => {
@@ -1414,8 +1688,11 @@ export default function App() {
       case "dashboard": return <Dashboard cart={cart} setCart={setCart} onAdd={onAdd} setActive={setActive} />;
       case "ventas": return <VentasScreen cart={cart} setCart={setCart} onAdd={onAdd} />;
       case "productos": return <ProductsScreen />;
+      case "stock": return <StockScreen />;
       case "compras": return <ComprasScreen />;
       case "pedidos": return <PedidosScreen />;
+      case "caja": return <CajaScreen />;
+      case "reportes": return <ReportesScreen />;
       default: {
         const n = NAV.find((x) => x.id === active);
         return <Placeholder title={n.label} icon={n.icon} />;
@@ -1424,7 +1701,7 @@ export default function App() {
   };
 
   return (
-    <Store.Provider value={{ products, setProducts }}>
+    <Store.Provider value={{ products, setProducts, ventas, refreshVentas }}>
     <div style={{ display: "flex", height: "100vh", width: "100%", background: C.bg, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", overflow: "hidden" }}>
       <style>{`
         * { box-sizing: border-box; }
