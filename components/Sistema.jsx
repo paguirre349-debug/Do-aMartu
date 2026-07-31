@@ -5,7 +5,7 @@ import { SEED_PRODUCTS } from "@/lib/seed";
 import { supabaseReady } from "@/lib/supabase";
 import {
   fetchProductos, upsertProducto, subirFoto,
-  registrarCompra, registrarVenta, fetchVentas,
+  registrarCompra, registrarVenta, fetchVentas, fetchCompras,
   fetchPedidos, crearPedido, actualizarPedido,
 } from "@/lib/db";
 import {
@@ -829,9 +829,20 @@ function ComprasScreen() {
   const [unitCost, setUnitCost] = useState(products[0]?.cost || 0);
   const [price, setPrice] = useState(products[0]?.price || 0);
   const [log, setLog] = useState([]);
+  const [cargando, setCargando] = useState(true);
+
+  // traer historial real de compras al abrir
+  useEffect(() => {
+    (async () => {
+      const data = await fetchCompras();
+      setLog(data || []);
+      setCargando(false);
+    })();
+  }, []);
 
   const p = products.find((x) => x.id === sel);
   useEffect(() => { if (p) { setUnitCost(p.cost); setPrice(p.price); } }, [sel]); // eslint-disable-line
+  const provDe = (pid) => products.find((x) => x.id === pid)?.prov || "—";
 
   const total = qty * unitCost;
   const register = async () => {
@@ -839,18 +850,39 @@ function ComprasScreen() {
     const updated = { ...p, cost: Number(unitCost), price: Number(price),
       stock: p.stock + Number(qty), label: `${p.stock + Number(qty)} ${p.unit === "maple" ? "maples" : p.unit}` };
     setProducts((prev) => prev.map((x) => x.id === sel ? updated : x));
-    setLog((l) => [{ id: Date.now(), name: p.name, qty, unitCost, total, when: "Recién" }, ...l]);
     try {
-      await registrarCompra({ pid: sel, name: p.name, qty, unitCost, total }); // guarda la compra
-      await upsertProducto(updated); // actualiza costo/precio/stock del producto
-    } catch (e) { /* modo demo: sigue local */ }
+      const guardada = await registrarCompra({ pid: sel, name: p.name, qty, unitCost, total });
+      await upsertProducto(updated);
+      // agregar al historial con los datos que devuelve Supabase (con fecha real)
+      setLog((l) => [{ id: guardada?.id || Date.now(), producto_id: sel, nombre: p.name, cantidad: qty, costo_unitario: unitCost, total, creado_en: guardada?.creado_en || new Date().toISOString() }, ...l]);
+    } catch (e) {
+      setLog((l) => [{ id: Date.now(), producto_id: sel, nombre: p.name, cantidad: qty, costo_unitario: unitCost, total, creado_en: new Date().toISOString() }, ...l]);
+    }
+  };
+
+  // total gastado hoy en compras
+  const hoyStr = new Date().toDateString();
+  const comprasHoy = log.filter((c) => c.creado_en && new Date(c.creado_en).toDateString() === hoyStr);
+  const gastadoHoy = comprasHoy.reduce((s, c) => s + Number(c.total || 0), 0);
+
+  const fechaCompra = (c) => {
+    if (!c.creado_en) return "Recién";
+    const d = new Date(c.creado_en);
+    const esHoy = d.toDateString() === hoyStr;
+    return esHoy ? `Hoy ${d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}` : d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   };
 
   return (
     <div>
-      <div style={{ marginBottom: 18 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Compras</h1>
-        <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>Registrá una compra y calculá a cuánto venderla</p>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Compras</h1>
+          <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>Registrá una compra a proveedor y calculá a cuánto venderla</p>
+        </div>
+        <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 16px", textAlign: "right" }}>
+          <div style={{ fontSize: 11.5, color: C.sub }}>Gastado hoy en compras</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: C.red, fontVariantNumeric: "tabular-nums" }}>{money(gastadoHoy)}</div>
+        </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="mid-grid">
         <Panel style={{ padding: 20 }}>
@@ -860,6 +892,7 @@ function ComprasScreen() {
               {products.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
             </select>
           </Field>
+          {p?.prov && <div style={{ fontSize: 12, color: C.faint, marginTop: 6 }}>Proveedor: {p.prov}</div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
             <Field label={`Cantidad (${p?.unit || ""})`}>
               <input type="number" value={qty} onChange={(e) => setQty(Number(e.target.value))} style={inp} />
@@ -878,18 +911,26 @@ function ComprasScreen() {
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <MarginCalc cost={unitCost} price={price} setPrice={setPrice} />
           <Panel style={{ padding: 20, flex: 1 }}>
-            <SectionHead icon={Clock} title="Compras registradas" />
-            {!log.length ? (
+            <SectionHead icon={Clock} title="Historial de compras" />
+            {cargando ? (
+              <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Cargando…</div>
+            ) : !log.length ? (
               <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Todavía no registraste compras</div>
-            ) : log.map((l) => (
-              <div key={l.id} style={{ display: "flex", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{l.name}</div>
-                  <div style={{ fontSize: 11.5, color: C.faint }}>{l.qty} × {money(l.unitCost)} · {l.when}</div>
-                </div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(l.total)}</div>
+            ) : (
+              <div style={{ maxHeight: 360, overflowY: "auto" }}>
+                {log.map((l) => (
+                  <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+                    <Photo id={l.producto_id} size={34} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{l.nombre}</div>
+                      <div style={{ fontSize: 11.5, color: C.faint }}>{l.cantidad} × {money(l.costo_unitario)} · {provDe(l.producto_id)}</div>
+                      <div style={{ fontSize: 11, color: C.faint }}>{fechaCompra(l)}</div>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(l.total)}</div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </Panel>
         </div>
       </div>
