@@ -5,7 +5,7 @@ import { SEED_PRODUCTS } from "@/lib/seed";
 import { supabaseReady } from "@/lib/supabase";
 import {
   fetchProductos, upsertProducto, subirFoto,
-  registrarCompra, registrarVenta,
+  registrarCompra, registrarVenta, fetchVentas,
   fetchPedidos, crearPedido, actualizarPedido,
 } from "@/lib/db";
 import {
@@ -73,43 +73,6 @@ const Store = React.createContext(null);
 const useStore = () => React.useContext(Store);
 // stand-in used only for the initial cart seed before context mounts:
 const P = (id) => SEED_PRODUCTS.find((p) => p.id === id);
-
-const STOCK_QUICK = ["pollo", "milanesa", "huevos", "papas", "coca", "pan"];
-const FREQUENT = ["pollo", "pechuga", "milanesa", "alitas", "huevos", "papasfritas", "coca", "pan", "hamburguesa", "queso", "salchicha", "mayonesa"];
-
-const HOURLY = [
-  { h: "7", v: 2000 }, { h: "8", v: 6000 }, { h: "9", v: 9000 }, { h: "10", v: 13000 },
-  { h: "11", v: 21000 }, { h: "12", v: 19000 }, { h: "13", v: 12000 }, { h: "14", v: 14000 },
-  { h: "15", v: 16000 }, { h: "16", v: 15000 }, { h: "17", v: 22000 }, { h: "18", v: 26000 },
-  { h: "19", v: 32600 }, { h: "20", v: 24000 }, { h: "21", v: 13000 }, { h: "22", v: 4000 },
-];
-
-const INSIGHTS = [
-  { icon: TrendingUp, color: C.green, text: "Hoy se vendió 22% más que el viernes pasado." },
-  { icon: AlertTriangle, color: C.primary, text: "Quedan solo 4 kg de milanesas.", sub: "Recomendamos reponer." },
-  { icon: TrendingUp, color: C.purple, text: "Los viernes vendés un 42% más de gaseosas." },
-  { icon: Lightbulb, color: C.primary, text: "Un combo de pollo + papas + coca puede aumentar tu ticket promedio." },
-];
-
-const RECENT = [
-  { n: "#000125", t: "Hace 5 min", v: 12350, m: "Efectivo", c: C.green },
-  { n: "#000124", t: "Hace 18 min", v: 8700, m: "Transferencia", c: C.blue },
-  { n: "#000123", t: "Hace 25 min", v: 15600, m: "Efectivo", c: C.green },
-  { n: "#000122", t: "Hace 40 min", v: 5200, m: "Mercado Pago", c: C.primary },
-];
-const CLIENTS = [
-  { name: "María López", buys: 12, v: 48600, last: "Hoy" },
-  { name: "Juan Pérez", buys: 8, v: 32700, last: "Ayer" },
-  { name: "Pedro González", buys: 5, v: 21300, last: "3 días" },
-  { name: "Ana Rodríguez", buys: 10, v: 41800, last: "Hoy" },
-];
-const TOP = [
-  { id: "pollo", qty: "132 kg", v: 693000 },
-  { id: "pechuga", qty: "98 kg", v: 735000 },
-  { id: "milanesa", qty: "76 kg", v: 592800 },
-  { id: "alitas", qty: "65 kg", v: 273000 },
-  { id: "huevos", qty: "58 maples", v: 278400 },
-];
 
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
@@ -326,14 +289,18 @@ function NewSaleCard({ cart, setCart, onAdd }) {
    ============================================================ */
 function FrequentGrid({ onAdd }) {
   const { products } = useStore();
-  const byId = (id) => products.find((p) => p.id === id);
+  const lista = products.slice(0, 12);
   return (
     <Panel style={{ padding: 20 }}>
-      <SectionHead icon={ShoppingCart} title="Productos frecuentes" action="Ver todos" />
+      <SectionHead icon={ShoppingCart} title="Productos frecuentes" />
+      {!lista.length ? (
+        <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "30px 0" }}>
+          Cargá productos en la pestaña Productos para verlos acá
+        </div>
+      ) : (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }} className="freq-grid">
-        {FREQUENT.map((id) => {
-          const p = byId(id);
-          if (!p) return null;
+        {lista.map((p) => {
+          const id = p.id;
           return (
             <motion.button key={id} whileHover={{ y: -3 }} whileTap={{ scale: 0.96 }}
               transition={{ type: "spring", stiffness: 400, damping: 26 }} onClick={() => onAdd(p)}
@@ -349,6 +316,7 @@ function FrequentGrid({ onAdd }) {
           );
         })}
       </div>
+      )}
     </Panel>
   );
 }
@@ -359,14 +327,85 @@ function FrequentGrid({ onAdd }) {
 function Dashboard({ cart, setCart, onAdd }) {
   const { products } = useStore();
   const byId = (id) => products.find((p) => p.id === id);
+  const [ventas, setVentas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+
+  // Traer ventas reales
+  useEffect(() => {
+    (async () => {
+      const v = await fetchVentas();
+      setVentas(v || []);
+      setCargando(false);
+    })();
+  }, []);
+
+  // ---- CÁLCULOS REALES ----
+  const hoyStr = new Date().toDateString();
+  const ventasHoy = ventas.filter((v) => v.creado_en && new Date(v.creado_en).toDateString() === hoyStr);
+
+  const facturacionHoy = ventasHoy.reduce((s, v) => s + Number(v.total || 0), 0);
+  const ticketsHoy = ventasHoy.length;
+  const productosVendidosHoy = ventasHoy.reduce((s, v) =>
+    s + (Array.isArray(v.items) ? v.items.reduce((a, i) => a + Number(i.qty || 0), 0) : 0), 0);
+
+  const criticos = products.filter((p) => p.byWeight ? p.stock <= 5 : p.stock <= 6).length;
+
+  // Ventas por hora (hoy)
+  const horas = Array.from({ length: 16 }, (_, i) => ({ h: String(7 + i), v: 0 }));
+  ventasHoy.forEach((v) => {
+    const hr = new Date(v.creado_en).getHours();
+    const idx = hr - 7;
+    if (idx >= 0 && idx < 16) horas[idx].v += Number(v.total || 0);
+  });
+  const maxHora = Math.max(...horas.map((h) => h.v), 0);
+
+  // Top / más vendidos (acumulado de todas las ventas)
+  const acum = {};
+  ventas.forEach((v) => {
+    if (!Array.isArray(v.items)) return;
+    v.items.forEach((i) => {
+      if (!acum[i.id]) acum[i.id] = { id: i.id, name: i.name, qty: 0, v: 0 };
+      acum[i.id].qty += Number(i.qty || 0);
+      acum[i.id].v += Number(i.qty || 0) * Number(i.price || 0);
+    });
+  });
+  const masVendidos = Object.values(acum).sort((a, b) => b.qty - a.qty);
+  const topProductos = masVendidos.slice(0, 5);
+  const stockRapidoIds = masVendidos.slice(0, 6).map((x) => x.id);
+  // si todavía no hay ventas, mostramos los productos con menos stock como respaldo
+  const stockRapido = stockRapidoIds.length
+    ? stockRapidoIds.map(byId).filter(Boolean)
+    : [...products].sort((a, b) => a.stock - b.stock).slice(0, 6);
+
+  // Ventas recientes
+  const recientes = ventas.slice(0, 5);
+  const metodoColor = { efectivo: C.green, transferencia: C.blue, mp: C.primary, tarjeta: C.purple };
+  const metodoLabel = { efectivo: "Efectivo", transferencia: "Transferencia", mp: "Mercado Pago", tarjeta: "Tarjeta" };
+  const haceCuanto = (fecha) => {
+    const min = Math.floor((Date.now() - new Date(fecha)) / 60000);
+    if (min < 1) return "Recién";
+    if (min < 60) return `Hace ${min} min`;
+    const hs = Math.floor(min / 60);
+    if (hs < 24) return `Hace ${hs} h`;
+    return `Hace ${Math.floor(hs / 24)} días`;
+  };
+
+  // Insights automáticos según datos reales
+  const insights = [];
+  if (facturacionHoy > 0) insights.push({ icon: TrendingUp, color: C.green, text: `Llevás ${money(facturacionHoy)} facturados hoy en ${ticketsHoy} ${ticketsHoy === 1 ? "venta" : "ventas"}.` });
+  const critList = products.filter((p) => p.byWeight ? p.stock <= 5 : p.stock <= 6);
+  if (critList.length) insights.push({ icon: AlertTriangle, color: C.primary, text: `${critList.length} ${critList.length === 1 ? "producto está" : "productos están"} en stock crítico.`, sub: critList.slice(0, 3).map((p) => p.name).join(", ") });
+  if (topProductos.length) insights.push({ icon: Sparkles, color: C.purple, text: `Tu producto más vendido es ${topProductos[0].name}.` });
+  if (!insights.length) insights.push({ icon: Lightbulb, color: C.primary, text: "Todavía no hay ventas cargadas. Registrá tu primera venta y acá vas a ver tus números en vivo." });
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }} className="kpi-grid">
-        <KPI icon={Wallet} tint={C.primary} label="Ventas del día" n={286400} delta="18%" note="vs. jueves pasado" spark />
-        <KPI icon={ShoppingCart} tint={C.purple} label="Tickets realizados" raw="36" delta="6" note="vs. jueves pasado" />
-        <KPI icon={Package} tint={C.blue} label="Productos vendidos" raw="124" delta="15" note="vs. jueves pasado" />
-        <KPI icon={AlertTriangle} tint={C.red} label="Stock crítico" raw="8" critical />
+        <KPI icon={Wallet} tint={C.primary} label="Ventas del día" n={facturacionHoy} spark note={ticketsHoy ? `${ticketsHoy} ${ticketsHoy === 1 ? "venta" : "ventas"} hoy` : "Sin ventas aún"} noDelta />
+        <KPI icon={ShoppingCart} tint={C.purple} label="Tickets realizados" raw={String(ticketsHoy)} note="hoy" noDelta />
+        <KPI icon={Package} tint={C.blue} label="Productos vendidos" raw={String(Math.round(productosVendidosHoy))} note="hoy" noDelta />
+        <KPI icon={AlertTriangle} tint={C.red} label="Stock crítico" raw={String(criticos)} critical />
       </div>
 
       {/* chart + assistant */}
@@ -374,31 +413,37 @@ function Dashboard({ cart, setCart, onAdd }) {
         <Panel style={{ padding: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Ventas por hora</div>
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 9, padding: "6px 12px", fontSize: 12.5, color: C.sub }}>Hoy ▾</div>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 9, padding: "6px 12px", fontSize: 12.5, color: C.sub }}>Hoy</div>
           </div>
-          <ResponsiveContainer width="100%" height={230}>
-            <BarChart data={HOURLY} margin={{ top: 20, right: 0, left: -18, bottom: 0 }}>
-              <XAxis dataKey="h" stroke={C.faint} fontSize={11} tickLine={false} axisLine={false} />
-              <YAxis stroke={C.faint} fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v / 1000}k`} />
-              <Tooltip cursor={{ fill: "rgba(255,255,255,.03)" }}
-                content={({ active, payload, label }) =>
-                  active && payload?.length ? (
-                    <div style={{ background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10, padding: "8px 12px", textAlign: "center" }}>
-                      <div style={{ fontSize: 11, color: C.sub }}>{label}:00 hs</div>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{money(payload[0].value)}</div>
-                    </div>
-                  ) : null} />
-              <Bar dataKey="v" radius={[5, 5, 0, 0]} animationDuration={900} barSize={16}>
-                {HOURLY.map((e, i) => <Cell key={i} fill={e.h === "19" ? C.primary : "rgba(251,191,36,.55)"} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          {maxHora === 0 ? (
+            <div style={{ height: 230, display: "grid", placeItems: "center", color: C.faint, fontSize: 13, textAlign: "center" }}>
+              <div><ShoppingCart size={28} color={C.border2} style={{ margin: "0 auto 8px" }} />Sin ventas todavía hoy</div>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={230}>
+              <BarChart data={horas} margin={{ top: 20, right: 0, left: -18, bottom: 0 }}>
+                <XAxis dataKey="h" stroke={C.faint} fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke={C.faint} fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`} />
+                <Tooltip cursor={{ fill: "rgba(255,255,255,.03)" }}
+                  content={({ active, payload, label }) =>
+                    active && payload?.length ? (
+                      <div style={{ background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10, padding: "8px 12px", textAlign: "center" }}>
+                        <div style={{ fontSize: 11, color: C.sub }}>{label}:00 hs</div>
+                        <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{money(payload[0].value)}</div>
+                      </div>
+                    ) : null} />
+                <Bar dataKey="v" radius={[5, 5, 0, 0]} animationDuration={900} barSize={16}>
+                  {horas.map((e, i) => <Cell key={i} fill={e.v === maxHora && e.v > 0 ? C.primary : "rgba(251,191,36,.55)"} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </Panel>
 
         <Panel style={{ padding: 20 }}>
-          <SectionHead icon={Sparkles} title="Asistente de negocios" action="Ver todos" />
+          <SectionHead icon={Sparkles} title="Asistente de negocios" />
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {INSIGHTS.map((ins, i) => (
+            {insights.map((ins, i) => (
               <motion.div key={i} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.08 }}
                 style={{ display: "flex", gap: 12, alignItems: "flex-start", background: C.card, borderRadius: 12, padding: "12px 14px" }}>
                 <div style={{ width: 30, height: 30, borderRadius: 9, background: `${ins.color}22`, display: "grid", placeItems: "center", flexShrink: 0 }}>
@@ -413,31 +458,34 @@ function Dashboard({ cart, setCart, onAdd }) {
         </Panel>
       </div>
 
-      {/* stock quick strip */}
+      {/* stock quick strip (los más vendidos) */}
       <Panel style={{ padding: 20 }}>
-        <SectionHead icon={Package} title="Stock rápido" action="Ver todos" />
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }} className="stock-strip">
-          {STOCK_QUICK.map((id, idx) => {
-            const p = byId(id); if (!p) return null;
-            const max = p.byWeight ? 40 : p.unit === "maple" ? 80 : 40;
-            const pct = Math.min(100, (p.stock / max) * 100);
-            const crit = p.byWeight ? p.stock <= 5 : p.stock <= 6;
-            return (
-              <div key={id} style={{ background: C.card, border: `1px solid ${crit ? C.redSoft : C.border}`, borderRadius: 14, padding: 14 }}>
-                <div style={{ width: "100%", height: 72, borderRadius: 10, overflow: "hidden", marginBottom: 10, background: C.card2 }}>
-                  <FullPhoto id={id} />
+        <SectionHead icon={Package} title="Stock rápido" />
+        {!stockRapido.length ? (
+          <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Cargá productos para verlos acá</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }} className="stock-strip">
+            {stockRapido.map((p, idx) => {
+              const max = p.byWeight ? 40 : p.unit === "maple" ? 80 : 40;
+              const pct = Math.min(100, (p.stock / max) * 100);
+              const crit = p.byWeight ? p.stock <= 5 : p.stock <= 6;
+              return (
+                <div key={p.id} style={{ background: C.card, border: `1px solid ${crit ? C.redSoft : C.border}`, borderRadius: 14, padding: 14 }}>
+                  <div style={{ width: "100%", height: 72, borderRadius: 10, overflow: "hidden", marginBottom: 10, background: C.card2 }}>
+                    <FullPhoto id={p.id} />
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{p.name}</div>
+                  <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>{p.stock} {p.unit === "maple" ? "maples" : p.unit}</div>
+                  <div style={{ height: 5, background: C.card2, borderRadius: 999, overflow: "hidden" }}>
+                    <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ delay: idx * 0.05 + 0.2, duration: 0.7 }}
+                      style={{ height: "100%", borderRadius: 999, background: crit ? C.red : pct < 40 ? C.primary : C.green }} />
+                  </div>
+                  {crit && <div style={{ fontSize: 11, color: C.red, fontWeight: 600, marginTop: 6 }}>Stock crítico</div>}
                 </div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{p.name}</div>
-                <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>{p.label}</div>
-                <div style={{ height: 5, background: C.card2, borderRadius: 999, overflow: "hidden" }}>
-                  <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ delay: idx * 0.05 + 0.2, duration: 0.7 }}
-                    style={{ height: "100%", borderRadius: 999, background: crit ? C.red : pct < 40 ? C.primary : C.green }} />
-                </div>
-                {crit && <div style={{ fontSize: 11, color: C.red, fontWeight: 600, marginTop: 6 }}>Stock crítico</div>}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </Panel>
 
       {/* new sale + frequent */}
@@ -449,46 +497,40 @@ function Dashboard({ cart, setCart, onAdd }) {
       {/* bottom trio */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }} className="trio-grid">
         <Panel style={{ padding: 20 }}>
-          <SectionHead title="Ventas recientes" action="Ver todas" />
-          {RECENT.map((r) => (
-            <div key={r.n} style={{ display: "flex", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
+          <SectionHead title="Ventas recientes" />
+          {!recientes.length ? (
+            <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Todavía no hay ventas</div>
+          ) : recientes.map((r) => (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{r.n}</div>
-                <div style={{ fontSize: 11.5, color: C.faint }}>{r.t}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>#{String(r.id).padStart(6, "0")}</div>
+                <div style={{ fontSize: 11.5, color: C.faint }}>{haceCuanto(r.creado_en)}</div>
               </div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginRight: 14, fontVariantNumeric: "tabular-nums" }}>{money(r.v)}</div>
-              <span style={{ fontSize: 11.5, fontWeight: 600, color: r.c }}>{r.m}</span>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginRight: 14, fontVariantNumeric: "tabular-nums" }}>{money(r.total)}</div>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: metodoColor[r.metodo_pago] || C.sub }}>{metodoLabel[r.metodo_pago] || r.metodo_pago || "—"}</span>
             </div>
           ))}
         </Panel>
 
         <Panel style={{ padding: 20 }}>
-          <SectionHead title="Clientes frecuentes" action="Ver todos" />
-          {CLIENTS.map((c) => (
-            <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 0", borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ width: 32, height: 32, borderRadius: 999, background: C.card, border: `1px solid ${C.border2}`, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: C.sub }}>{c.name[0]}</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{c.name}</div>
-                <div style={{ fontSize: 11.5, color: C.faint }}>{c.buys} compras</div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(c.v)}</div>
-                <div style={{ fontSize: 11, color: C.faint }}>Última: {c.last}</div>
-              </div>
-            </div>
-          ))}
+          <SectionHead title="Clientes frecuentes" />
+          <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "24px 12px", lineHeight: 1.5 }}>
+            Cuando registres ventas por cliente, acá vas a ver quiénes son tus habitués.
+          </div>
         </Panel>
 
         <Panel style={{ padding: 20 }}>
-          <SectionHead title="Top productos" action="Ver todos" />
-          {TOP.map((t, i) => {
-            const p = byId(t.id) || { name: t.id };
+          <SectionHead title="Top productos" />
+          {!topProductos.length ? (
+            <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Sin ventas todavía</div>
+          ) : topProductos.map((t, i) => {
+            const p = byId(t.id) || { name: t.name, unit: "" };
             return (
               <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: `1px solid ${C.border}` }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: C.faint, width: 14 }}>{i + 1}</div>
                 <Photo id={t.id} size={30} />
                 <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: C.text }}>{p.name}</div>
-                <div style={{ fontSize: 12, color: C.sub, marginRight: 12, fontVariantNumeric: "tabular-nums" }}>{t.qty}</div>
+                <div style={{ fontSize: 12, color: C.sub, marginRight: 12, fontVariantNumeric: "tabular-nums" }}>{Math.round(t.qty * 100) / 100} {p.unit}</div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(t.v)}</div>
               </div>
             );
@@ -508,7 +550,7 @@ function FullPhoto({ id }) {
   return <img src={url} onError={() => setErr(true)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />;
 }
 
-function KPI({ icon: Icon, tint, label, n, raw, delta, note, spark, critical }) {
+function KPI({ icon: Icon, tint, label, n, raw, delta, note, spark, critical, noDelta }) {
   const v = useCountUp(n || 0);
   return (
     <Panel style={{ padding: 20, position: "relative", overflow: "hidden" }}>
@@ -525,6 +567,8 @@ function KPI({ icon: Icon, tint, label, n, raw, delta, note, spark, critical }) 
         <button style={{ background: "none", border: "none", color: C.sub, fontSize: 12.5, cursor: "pointer", marginTop: 12, padding: 0, display: "flex", alignItems: "center", gap: 4 }}>
           Ver productos <ChevronRight size={13} />
         </button>
+      ) : noDelta ? (
+        <div style={{ fontSize: 11.5, color: C.faint, marginTop: 12 }}>{note}</div>
       ) : (
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 12, fontWeight: 700, color: C.green, background: C.greenSoft, padding: "2px 7px", borderRadius: 6 }}>

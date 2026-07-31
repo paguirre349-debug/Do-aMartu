@@ -1,11 +1,14 @@
-import path from "path";
+import { fileURLToPath } from "url";
+import { dirname } from "path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Fija la raíz del proyecto para evitar que el build se confunda
-  // si hay otras carpetas de node por encima.
+  // Fija la raíz del proyecto en la carpeta de este archivo,
+  // para que el build no se confunda con otras carpetas por encima.
   turbopack: {
-    root: path.resolve("."),
+    root: __dirname,
   },
   images: {
     remotePatterns: [
