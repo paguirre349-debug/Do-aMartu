@@ -8,6 +8,7 @@ import {
   registrarCompra, registrarVenta, fetchVentas, fetchCompras, deleteCompra, deleteVenta,
   fetchPedidos, crearPedido, actualizarPedido,
   fetchPromos, crearPromo, borrarPromo,
+  login, logout, getSesion, misNegocios, setNegocioActivo, getNegocioActivo,
 } from "@/lib/db";
 import {
   LayoutGrid, ShoppingCart, Beef, Package, Download, Users, Truck, Wallet,
@@ -17,6 +18,7 @@ import {
   Maximize2, ChevronRight, Command, ClipboardList, Upload, Percent,
   Calculator, Pencil, Save, ImagePlus, Clock, Truck as TruckIcon, PackageCheck,
   Banknote, Building2, Smartphone, CreditCard,
+  LogOut, Store as StoreIcon, Lock, Mail, ChevronDown,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell,
@@ -824,10 +826,11 @@ function ComprasScreen() {
   const [qty, setQty] = useState(10);
   const [unitCost, setUnitCost] = useState(products[0]?.cost || 0);
   const [price, setPrice] = useState(products[0]?.price || 0);
+  const [carrito, setCarrito] = useState([]); // ítems de la compra actual
   const [log, setLog] = useState([]);
   const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
 
-  // traer historial real de compras al abrir
   useEffect(() => {
     (async () => {
       const data = await fetchCompras();
@@ -840,29 +843,49 @@ function ComprasScreen() {
   useEffect(() => { if (p) { setUnitCost(p.cost); setPrice(p.price); } }, [sel]); // eslint-disable-line
   const provDe = (pid) => products.find((x) => x.id === pid)?.prov || "—";
 
-  const total = qty * unitCost;
-  const register = async () => {
-    if (!p) return;
-    const updated = { ...p, cost: Number(unitCost), price: Number(price),
-      stock: p.stock + Number(qty), label: `${p.stock + Number(qty)} ${p.unit === "maple" ? "maples" : p.unit}` };
-    setProducts((prev) => prev.map((x) => x.id === sel ? updated : x));
-    try {
-      const guardada = await registrarCompra({ pid: sel, name: p.name, qty, unitCost, total });
-      await upsertProducto(updated);
-      // agregar al historial con los datos que devuelve Supabase (con fecha real)
-      setLog((l) => [{ id: guardada?.id || Date.now(), producto_id: sel, nombre: p.name, cantidad: qty, costo_unitario: unitCost, total, creado_en: guardada?.creado_en || new Date().toISOString() }, ...l]);
-    } catch (e) {
-      setLog((l) => [{ id: Date.now(), producto_id: sel, nombre: p.name, cantidad: qty, costo_unitario: unitCost, total, creado_en: new Date().toISOString() }, ...l]);
+  // agregar ítem al carrito de compra
+  const agregarItem = () => {
+    if (!p || qty <= 0) return;
+    setCarrito((c) => {
+      const existe = c.find((x) => x.id === sel);
+      if (existe) return c.map((x) => x.id === sel ? { ...x, qty: Number(qty), unitCost: Number(unitCost), price: Number(price) } : x);
+      return [...c, { id: sel, name: p.name, qty: Number(qty), unitCost: Number(unitCost), price: Number(price), unit: p.unit }];
+    });
+  };
+  const quitarItem = (id) => setCarrito((c) => c.filter((x) => x.id !== id));
+  const totalCompra = carrito.reduce((s, i) => s + i.qty * i.unitCost, 0);
+
+  // registrar toda la compra (varios ítems)
+  const registrarTodo = async () => {
+    if (!carrito.length) return;
+    setGuardando(true);
+    // actualizar productos (stock + costo + precio)
+    setProducts((prev) => prev.map((x) => {
+      const item = carrito.find((i) => i.id === x.id);
+      if (!item) return x;
+      const np = { ...x, cost: item.unitCost, price: item.price, stock: x.stock + item.qty, label: `${x.stock + item.qty} ${x.unit === "maple" ? "maples" : x.unit}` };
+      upsertProducto(np).catch(() => {});
+      return np;
+    }));
+    // guardar cada ítem como una compra y agregar al historial
+    for (const item of carrito) {
+      const total = item.qty * item.unitCost;
+      try {
+        const guardada = await registrarCompra({ pid: item.id, name: item.name, qty: item.qty, unitCost: item.unitCost, total });
+        setLog((l) => [{ id: guardada?.id || Date.now() + Math.random(), producto_id: item.id, nombre: item.name, cantidad: item.qty, costo_unitario: item.unitCost, total, creado_en: guardada?.creado_en || new Date().toISOString() }, ...l]);
+      } catch (e) {
+        setLog((l) => [{ id: Date.now() + Math.random(), producto_id: item.id, nombre: item.name, cantidad: item.qty, costo_unitario: item.unitCost, total, creado_en: new Date().toISOString() }, ...l]);
+      }
     }
+    setCarrito([]);
+    setGuardando(false);
   };
 
-  // total gastado hoy en compras
   const hoyStr = new Date().toDateString();
   const comprasHoy = log.filter((c) => c.creado_en && new Date(c.creado_en).toDateString() === hoyStr);
   const gastadoHoy = comprasHoy.reduce((s, c) => s + Number(c.total || 0), 0);
 
   const borrar = async (compra) => {
-    // descontar del stock lo que esta compra había sumado
     const prod = products.find((x) => x.id === compra.producto_id);
     if (prod) {
       const nuevoStock = Math.max(0, +(prod.stock - Number(compra.cantidad || 0)).toFixed(3));
@@ -886,37 +909,74 @@ function ComprasScreen() {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Compras</h1>
-          <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>Registrá una compra a proveedor y calculá a cuánto venderla</p>
+          <p style={{ fontSize: 13, color: C.sub, margin: "5px 0 0" }}>Cargá varios productos y registralos como una sola compra</p>
         </div>
         <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 16px", textAlign: "right" }}>
           <div style={{ fontSize: 11.5, color: C.sub }}>Gastado hoy en compras</div>
           <div style={{ fontSize: 20, fontWeight: 800, color: C.red, fontVariantNumeric: "tabular-nums" }}>{money(gastadoHoy)}</div>
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="mid-grid">
-        <Panel style={{ padding: 20 }}>
-          <SectionHead icon={Download} title="Registrar compra" />
-          <Field label="Producto">
-            <select value={sel} onChange={(e) => setSel(e.target.value)} style={inp}>
-              {products.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-            </select>
-          </Field>
-          {p?.prov && <div style={{ fontSize: 12, color: C.faint, marginTop: 6 }}>Proveedor: {p.prov}</div>}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-            <Field label={`Cantidad (${p?.unit || ""})`}>
-              <input type="number" value={qty} onChange={(e) => setQty(Number(e.target.value))} style={inp} />
-            </Field>
-            <Field label="Costo unitario">
-              <input type="number" value={unitCost} onChange={(e) => setUnitCost(Number(e.target.value))} style={inp} />
-            </Field>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", background: C.card, borderRadius: 12, padding: "13px 16px", margin: "14px 0" }}>
-            <span style={{ fontSize: 13, color: C.sub }}>Total de la compra</span>
-            <span style={{ fontSize: 22, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(total)}</span>
-          </div>
-          <button onClick={register} style={{ ...cobrarBtn, width: "100%", justifyContent: "center" }}><PackageCheck size={17} /> Registrar y sumar al stock</button>
-        </Panel>
 
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="mid-grid">
+        {/* IZQUIERDA: agregar ítem + carrito */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <Panel style={{ padding: 20 }}>
+            <SectionHead icon={Download} title="Agregar producto a la compra" />
+            <Field label="Producto">
+              <select value={sel} onChange={(e) => setSel(e.target.value)} style={inp}>
+                {products.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+            </Field>
+            {p?.prov && <div style={{ fontSize: 12, color: C.faint, marginTop: 6 }}>Proveedor: {p.prov}</div>}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+              <Field label={`Cantidad (${p?.unit || ""})`}>
+                <input type="number" value={qty} onChange={(e) => setQty(Number(e.target.value))} style={inp} />
+              </Field>
+              <Field label="Costo unitario">
+                <input type="number" value={unitCost} onChange={(e) => setUnitCost(Number(e.target.value))} style={inp} />
+              </Field>
+            </div>
+            <div style={{ fontSize: 12, color: C.faint, marginTop: 8 }}>Precio de venta nuevo: <b style={{ color: C.primary }}>{money(price)}</b> (ajustable con la calculadora →)</div>
+            <button onClick={agregarItem} disabled={!p || qty <= 0}
+              style={{ ...cobrarBtn, width: "100%", justifyContent: "center", marginTop: 14, background: C.card, color: C.text, border: `1px solid ${C.primary}` }}>
+              <Plus size={17} color={C.primary} /> Agregar a la compra
+            </button>
+          </Panel>
+
+          {/* carrito de la compra */}
+          <Panel style={{ padding: 20 }}>
+            <SectionHead icon={PackageCheck} title={`Productos en esta compra (${carrito.length})`} />
+            {!carrito.length ? (
+              <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Agregá productos de arriba para armar la compra</div>
+            ) : (
+              <>
+                <div style={{ maxHeight: 240, overflowY: "auto", marginBottom: 12 }}>
+                  {carrito.map((i) => (
+                    <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${C.border}` }}>
+                      <Photo id={i.id} size={34} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{i.name}</div>
+                        <div style={{ fontSize: 11.5, color: C.faint }}>{i.qty} {i.unit} × {money(i.unitCost)} · vende a {money(i.price)}</div>
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(i.qty * i.unitCost)}</div>
+                      <button onClick={() => quitarItem(i.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Trash2 size={15} color={C.faint} /></button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", background: C.card, borderRadius: 12, padding: "13px 16px", marginBottom: 14 }}>
+                  <span style={{ fontSize: 13, color: C.sub }}>Total de la compra</span>
+                  <span style={{ fontSize: 24, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>{money(totalCompra)}</span>
+                </div>
+                <button onClick={registrarTodo} disabled={guardando}
+                  style={{ ...cobrarBtn, width: "100%", justifyContent: "center", opacity: guardando ? 0.6 : 1 }}>
+                  <PackageCheck size={17} /> {guardando ? "Registrando…" : "Registrar compra y sumar al stock"}
+                </button>
+              </>
+            )}
+          </Panel>
+        </div>
+
+        {/* DERECHA: calculadora + historial */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <MarginCalc cost={unitCost} price={price} setPrice={setPrice} />
           <Panel style={{ padding: 20, flex: 1 }}>
@@ -926,7 +986,7 @@ function ComprasScreen() {
             ) : !log.length ? (
               <div style={{ color: C.faint, fontSize: 13, textAlign: "center", padding: "20px 0" }}>Todavía no registraste compras</div>
             ) : (
-              <div style={{ maxHeight: 360, overflowY: "auto" }}>
+              <div style={{ maxHeight: 400, overflowY: "auto" }}>
                 {log.map((l) => (
                   <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
                     <Photo id={l.producto_id} size={34} />
@@ -1834,12 +1894,13 @@ function Placeholder({ title, icon: Icon }) {
    SIDEBAR
    ============================================================ */
 function Sidebar({ active, setActive }) {
-  const { ventas = [] } = useStore();
+  const { ventas = [], negocio, negocios = [], onCambiarNegocio, onLogout } = useStore();
   const cajaHoy = statsDeVentas(ventas);
+  const variosLocales = negocios.length > 1;
   return (
     <aside className="sidebar" style={{ width: 210, flexShrink: 0, background: C.panel, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", padding: "18px 12px" }}>
       <div style={{ padding: "4px 4px 18px" }}>
-        <img src="/logo.png" alt="Doña Martu" style={{ width: "100%", borderRadius: 12, display: "block" }} />
+        <img src="/logo.png" alt="Logo" style={{ width: "100%", borderRadius: 12, display: "block" }} />
       </div>
       <nav style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, overflowY: "auto" }}>
         {NAV.map((n) => {
@@ -1854,14 +1915,23 @@ function Sidebar({ active, setActive }) {
         })}
       </nav>
       <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 14, marginTop: 8 }}>
+        {/* negocio activo */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "0 4px" }}>
-          <div style={{ width: 34, height: 34, borderRadius: 999, background: C.card, border: `1px solid ${C.border2}`, display: "grid", placeItems: "center", fontSize: 13, fontWeight: 700, color: C.sub }}>M</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Marta</div>
-            <div style={{ fontSize: 11, color: C.faint }}>Propietaria</div>
+          <div style={{ width: 34, height: 34, borderRadius: 11, background: C.primarySoft, display: "grid", placeItems: "center", flexShrink: 0 }}>
+            <StoreIcon size={17} color={C.primary} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{negocio?.nombre || "Local"}</div>
+            <div style={{ fontSize: 11, color: C.faint, textTransform: "capitalize" }}>{negocio?.rol || ""}</div>
           </div>
         </div>
-        <div style={{ background: C.card, borderRadius: 12, padding: 12 }}>
+        {variosLocales && (
+          <button onClick={onCambiarNegocio}
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10, padding: "9px", color: C.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
+            <ChevronDown size={14} color={C.primary} /> Cambiar de local
+          </button>
+        )}
+        <div style={{ background: C.card, borderRadius: 12, padding: 12, marginBottom: 10 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>Caja del día</div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
             <span style={{ color: C.sub }}>Ingresos</span>
@@ -1873,6 +1943,10 @@ function Sidebar({ active, setActive }) {
           </div>
           <button onClick={() => setActive("caja")} style={{ width: "100%", marginTop: 8, background: C.card2, border: `1px solid ${C.border2}`, borderRadius: 9, padding: "8px", color: C.sub, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Ver caja</button>
         </div>
+        <button onClick={onLogout}
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: "transparent", border: `1px solid ${C.border}`, borderRadius: 10, padding: "9px", color: C.sub, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+          <LogOut size={14} /> Cerrar sesión
+        </button>
       </div>
     </aside>
   );
@@ -1951,6 +2025,8 @@ function MobileNav({ active, setActive, onOpenMenu }) {
 
 /* ---- Menú completo deslizable (drawer) para móvil ---- */
 function MobileDrawer({ open, active, setActive, onClose }) {
+  const { negocio, negocios = [], onCambiarNegocio, onLogout } = useStore();
+  const variosLocales = negocios.length > 1;
   return (
     <AnimatePresence>
       {open && (
@@ -1958,20 +2034,38 @@ function MobileDrawer({ open, active, setActive, onClose }) {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
             style={{ position: "fixed", inset: 0, background: "rgba(3,7,18,.6)", zIndex: 60 }} />
           <motion.div initial={{ x: -280 }} animate={{ x: 0 }} exit={{ x: -280 }} transition={{ type: "spring", stiffness: 380, damping: 34 }}
-            style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: 260, zIndex: 61, background: C.panel, borderRight: `1px solid ${C.border2}`, padding: "18px 12px", overflowY: "auto" }}>
+            style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: 260, zIndex: 61, background: C.panel, borderRight: `1px solid ${C.border2}`, padding: "18px 12px", overflowY: "auto", display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <img src="/logo.png" alt="Doña Martu" style={{ width: 150, borderRadius: 10 }} />
+              <img src="/logo.png" alt="Logo" style={{ width: 150, borderRadius: 10 }} />
               <button onClick={onClose} style={iconBtn}><X size={17} color={C.sub} /></button>
             </div>
-            {NAV.map((n) => {
-              const on = active === n.id;
-              return (
-                <button key={n.id} onClick={() => { setActive(n.id); onClose(); }}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 12px", borderRadius: 11, border: "none", cursor: "pointer", background: on ? C.primarySoft : "transparent", color: on ? C.primary : C.sub, fontSize: 14.5, fontWeight: on ? 700 : 500, textAlign: "left" }}>
-                  <n.icon size={18} /> {n.label}
+            <div style={{ flex: 1 }}>
+              {NAV.map((n) => {
+                const on = active === n.id;
+                return (
+                  <button key={n.id} onClick={() => { setActive(n.id); onClose(); }}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 12px", borderRadius: 11, border: "none", cursor: "pointer", background: on ? C.primarySoft : "transparent", color: on ? C.primary : C.sub, fontSize: 14.5, fontWeight: on ? 700 : 500, textAlign: "left" }}>
+                    <n.icon size={18} /> {n.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12, marginTop: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 4px 10px" }}>
+                <StoreIcon size={16} color={C.primary} />
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{negocio?.nombre || "Local"}</div>
+              </div>
+              {variosLocales && (
+                <button onClick={() => { onClose(); onCambiarNegocio(); }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10, padding: "10px", color: C.text, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 8 }}>
+                  <ChevronDown size={14} color={C.primary} /> Cambiar de local
                 </button>
-              );
-            })}
+              )}
+              <button onClick={onLogout}
+                style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: "transparent", border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px", color: C.sub, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                <LogOut size={14} /> Cerrar sesión
+              </button>
+            </div>
           </motion.div>
         </>
       )}
@@ -1982,9 +2076,9 @@ function MobileDrawer({ open, active, setActive, onClose }) {
 /* ============================================================
    ROOT
    ============================================================ */
-export default function App() {
+function MainApp({ negocio, negocios, onCambiarNegocio, onLogout }) {
   const [active, setActive] = useState("dashboard");
-  const [products, setProducts] = useState(SEED_PRODUCTS);
+  const [products, setProducts] = useState([]);
   const [ventas, setVentas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [drawer, setDrawer] = useState(false);
@@ -2012,15 +2106,16 @@ export default function App() {
     try { await deleteVenta(venta.id); } catch (e) {}
   }, []);
 
-  // Cargar productos y ventas desde Supabase al abrir la app
+  // Cargar productos y ventas del negocio activo (recarga al cambiar de local)
   useEffect(() => {
+    setLoading(true);
     (async () => {
       const data = await fetchProductos();
-      if (data?.length) setProducts(data);
+      setProducts(data || []);
       await refreshVentas();
       setLoading(false);
     })();
-  }, [refreshVentas]);
+  }, [refreshVentas, negocio?.id]);
 
   const addToCart = useCallback((p, kg) => {
     setCart((prev) => {
@@ -2052,7 +2147,7 @@ export default function App() {
   };
 
   return (
-    <Store.Provider value={{ products, setProducts, ventas, refreshVentas, borrarVenta }}>
+    <Store.Provider value={{ products, setProducts, ventas, refreshVentas, borrarVenta, negocio, negocios, onCambiarNegocio, onLogout }}>
     <div style={{ display: "flex", height: "100vh", width: "100%", background: C.bg, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", overflow: "hidden" }}>
       <style>{`
         * { box-sizing: border-box; }
@@ -2122,6 +2217,162 @@ export default function App() {
     </div>
     </Store.Provider>
   );
+}
+
+/* ============================================================
+   LOGIN
+   ============================================================ */
+function LoginScreen({ onLogged }) {
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [err, setErr] = useState("");
+  const [cargando, setCargando] = useState(false);
+
+  const entrar = async (e) => {
+    e?.preventDefault();
+    setErr(""); setCargando(true);
+    try {
+      await login(email.trim(), pass);
+      onLogged();
+    } catch (er) {
+      setErr("Mail o contraseña incorrectos.");
+      setCargando(false);
+    }
+  };
+
+  return (
+    <div style={{ height: "100vh", width: "100%", background: C.bg, display: "grid", placeItems: "center", fontFamily: "'Inter', system-ui, sans-serif", padding: 20 }}>
+      <style>{`input::placeholder { color: ${C.faint}; }`}</style>
+      <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
+        style={{ width: "100%", maxWidth: 400 }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <img src="/logo.png" alt="Logo" style={{ width: 180, borderRadius: 16, margin: "0 auto 8px" }} />
+        </div>
+        <Panel style={{ padding: 28 }}>
+          <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: "0 0 4px" }}>Iniciar sesión</h1>
+          <p style={{ fontSize: 13, color: C.sub, margin: "0 0 20px" }}>Entrá con tu usuario para gestionar tu local</p>
+          <form onSubmit={entrar}>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: C.sub, marginBottom: 6 }}>Mail</div>
+              <div style={{ position: "relative" }}>
+                <Mail size={16} color={C.faint} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu@mail.com" required
+                  style={{ ...inp, paddingLeft: 38 }} />
+              </div>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: C.sub, marginBottom: 6 }}>Contraseña</div>
+              <div style={{ position: "relative" }}>
+                <Lock size={16} color={C.faint} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
+                <input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" required
+                  style={{ ...inp, paddingLeft: 38 }} />
+              </div>
+            </div>
+            {err && <div style={{ fontSize: 12.5, color: C.red, marginBottom: 12 }}>{err}</div>}
+            <button type="submit" disabled={cargando}
+              style={{ ...cobrarBtn, width: "100%", justifyContent: "center", opacity: cargando ? 0.6 : 1, fontSize: 15 }}>
+              {cargando ? "Entrando…" : "Entrar"}
+            </button>
+          </form>
+        </Panel>
+      </motion.div>
+    </div>
+  );
+}
+
+/* ============================================================
+   SELECTOR DE LOCAL (cuando el usuario tiene más de uno)
+   ============================================================ */
+function NegocioPicker({ negocios, onElegir, onLogout }) {
+  return (
+    <div style={{ height: "100vh", width: "100%", background: C.bg, display: "grid", placeItems: "center", fontFamily: "'Inter', system-ui, sans-serif", padding: 20 }}>
+      <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} style={{ width: "100%", maxWidth: 440 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, textAlign: "center", margin: "0 0 4px" }}>Elegí el local</h1>
+        <p style={{ fontSize: 13, color: C.sub, textAlign: "center", margin: "0 0 24px" }}>Tenés acceso a {negocios.length} negocios</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {negocios.map((n) => (
+            <motion.button key={n.id} whileHover={{ y: -2 }} onClick={() => onElegir(n)}
+              style={{ display: "flex", alignItems: "center", gap: 14, background: C.panel, border: `1px solid ${C.border2}`, borderRadius: 16, padding: "18px 20px", cursor: "pointer", textAlign: "left" }}>
+              <div style={{ width: 46, height: 46, borderRadius: 13, background: C.primarySoft, display: "grid", placeItems: "center", flexShrink: 0 }}>
+                <StoreIcon size={22} color={C.primary} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{n.nombre}</div>
+                <div style={{ fontSize: 12, color: C.sub, textTransform: "capitalize" }}>{n.rol}</div>
+              </div>
+              <ChevronRight size={20} color={C.faint} />
+            </motion.button>
+          ))}
+        </div>
+        <button onClick={onLogout} style={{ display: "block", margin: "24px auto 0", background: "none", border: "none", color: C.sub, fontSize: 13, cursor: "pointer" }}>Cerrar sesión</button>
+      </motion.div>
+    </div>
+  );
+}
+
+/* ============================================================
+   ROOT: maneja autenticación y elección de local
+   ============================================================ */
+export default function App() {
+  const [estado, setEstado] = useState("cargando"); // cargando | login | elegir | app
+  const [negocios, setNegocios] = useState([]);
+  const [negocio, setNegocio] = useState(null);
+
+  // si Supabase no está configurado, entra directo en modo demo
+  const cargarNegocios = useCallback(async () => {
+    const lista = await misNegocios();
+    setNegocios(lista);
+    if (lista.length === 0) {
+      // usuario sin local asignado
+      setEstado("sin-negocio");
+    } else if (lista.length === 1) {
+      elegirNegocio(lista[0]);
+    } else {
+      setEstado("elegir");
+    }
+  }, []);
+
+  const elegirNegocio = (n) => {
+    setNegocio(n);
+    setNegocioActivo(n.id);
+    setEstado("app");
+  };
+
+  const verificarSesion = useCallback(async () => {
+    if (!supabaseReady) { setEstado("app"); return; } // modo demo sin login
+    const sesion = await getSesion();
+    if (sesion) { await cargarNegocios(); }
+    else setEstado("login");
+  }, [cargarNegocios]);
+
+  useEffect(() => { verificarSesion(); }, [verificarSesion]);
+
+  const handleLogout = async () => {
+    await logout();
+    setNegocio(null); setNegocios([]);
+    setEstado("login");
+  };
+  const handleCambiarNegocio = () => {
+    if (negocios.length > 1) { setNegocio(null); setNegocioActivo(null); setEstado("elegir"); }
+  };
+
+  if (estado === "cargando") {
+    return <div style={{ height: "100vh", background: C.bg, display: "grid", placeItems: "center" }}>
+      <div style={{ color: C.sub, fontFamily: "'Inter', sans-serif", fontSize: 14 }}>Cargando…</div>
+    </div>;
+  }
+  if (estado === "login") return <LoginScreen onLogged={cargarNegocios} />;
+  if (estado === "elegir") return <NegocioPicker negocios={negocios} onElegir={elegirNegocio} onLogout={handleLogout} />;
+  if (estado === "sin-negocio") {
+    return <div style={{ height: "100vh", background: C.bg, display: "grid", placeItems: "center", padding: 20, fontFamily: "'Inter', sans-serif" }}>
+      <div style={{ textAlign: "center", maxWidth: 380 }}>
+        <div style={{ fontSize: 17, fontWeight: 700, color: C.text, marginBottom: 8 }}>Tu usuario no tiene un local asignado</div>
+        <div style={{ fontSize: 13.5, color: C.sub, marginBottom: 20 }}>Pedile al dueño que te vincule a un negocio.</div>
+        <button onClick={handleLogout} style={{ ...cobrarBtn, margin: "0 auto" }}>Cerrar sesión</button>
+      </div>
+    </div>;
+  }
+  return <MainApp negocio={negocio} negocios={negocios} onCambiarNegocio={handleCambiarNegocio} onLogout={handleLogout} />;
 }
 
 /* ============================================================
